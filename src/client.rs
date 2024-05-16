@@ -20,8 +20,9 @@ use std::{
 	net::{TcpListener, TcpStream},
 	ops::{Deref, DerefMut},
 	process::{Child, Command},
+	str::FromStr,
 };
-use tungstenite::{connect, stream::MaybeTlsStream, WebSocket};
+use tungstenite::{client::client_with_config, connect, stream::MaybeTlsStream, WebSocket};
 
 pub(crate) type WS = WebSocket<MaybeTlsStream<TcpStream>>;
 pub type SC2Result<T> = Result<T, Box<dyn Error>>;
@@ -115,12 +116,17 @@ where
 	}
 
 	/// Launches SC2 client and connects bot to the API.
-	pub fn launch(&mut self) -> SC2Result<()> {
-		let port = get_unused_port();
-		debug!("Launching SC2 process");
-		self.bot.process = Some(launch_client(&self.sc2_path, port, self.sc2_version));
-		debug!("Connecting to websocket");
-		self.bot.api = Some(API::new(connect_to_websocket(HOST, port)?));
+	pub fn launch(&mut self, target: Option<(String, i32)>) -> SC2Result<()> {
+		if let Some((host, port)) = target {
+			debug!("Connecting to existing websocket");
+			self.bot.api = Some(API::new(connect_to_websocket(&host, port)?));
+		} else {
+			let port = get_unused_port();
+			debug!("Launching SC2 process");
+			self.bot.process = Some(launch_client(&self.sc2_path, port, self.sc2_version));
+			debug!("Connecting to websocket");
+			self.bot.api = Some(API::new(connect_to_websocket(HOST, port)?));
+		}
 		Ok(())
 	}
 
@@ -389,6 +395,8 @@ pub struct LaunchOptions<'a> {
 	pub save_replay_as: Option<&'a str>,
 	/// Play games in real time mode or not.
 	pub realtime: bool,
+	/// Connect to an existing SC2 client.
+	pub target: Option<(String, i32)>,
 }
 
 // Runners
@@ -404,7 +412,7 @@ where
 	B: Player + DerefMut<Target = Bot> + Deref<Target = Bot>,
 {
 	let mut runner = RunnerSingle::new(bot, computer, map_name, options.sc2_version);
-	runner.launch()?;
+	runner.launch(options.target)?;
 	runner.realtime = options.realtime;
 	runner.save_replay_as = options.save_replay_as;
 	runner.run_game()?;
@@ -771,8 +779,18 @@ fn launch_client(sc2_path: &str, port: i32, sc2_version: Option<&str>) -> Child 
 fn connect_to_websocket(host: &str, port: i32) -> SC2Result<WS> {
 	let url = format!("ws://{}:{}/sc2api", host, port);
 	let (ws, _rs) = loop {
-		if let Ok(result) = connect(&url) {
-			break result;
+		println!("Connecting to {}", url);
+		if let Ok(stream) = std::net::TcpStream::connect_timeout(
+			&std::net::SocketAddr::new(std::net::IpAddr::from_str(host).unwrap(), port as u16),
+			std::time::Duration::from_secs(1),
+		) {
+			if let Ok(result) =
+				tungstenite::client::client_with_config(url.clone(), MaybeTlsStream::Plain(stream), None)
+			{
+				break result;
+			}
+		} else {
+			std::thread::sleep(std::time::Duration::from_secs(1));
 		}
 	};
 	Ok(ws)
