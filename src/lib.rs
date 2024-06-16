@@ -319,6 +319,7 @@ Because of version differences ids are conditionally compiled for windows and li
 [b]: macro@bot
 */
 // #![warn(missing_docs)]
+#![allow(warnings)]
 #![deny(broken_intra_doc_links)]
 #![allow(clippy::upper_case_acronyms)]
 
