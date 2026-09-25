@@ -32,38 +32,38 @@ use rust_sc2::prelude::*;
 #[derive(Default)]
 struct MyBot;
 impl Player for MyBot {
-    // This settings are used to connect bot to the game.
-    fn get_player_settings(&self) -> PlayerSettings {
-        PlayerSettings::new(Race::Random)
-            .with_name("BotName")
-            .raw_affects_selection(false)
-            .raw_crop_to_playable_area(true)
-    }
-    // This method will be called automatically each game step.
-    // Main bot's logic should be here.
-    // Bot's observation updates before each step.
-    fn on_step(&mut self, iteration: usize) -> SC2Result<()> {
-        /* Your code here */
-        Ok(())
-    }
+	// This settings are used to connect bot to the game.
+	fn get_player_settings(&self) -> PlayerSettings {
+		PlayerSettings::new(Race::Random)
+			.with_name("BotName")
+			.raw_affects_selection(false)
+			.raw_crop_to_playable_area(true)
+	}
+	// This method will be called automatically each game step.
+	// Main bot's logic should be here.
+	// Bot's observation updates before each step.
+	fn on_step(&mut self, iteration: usize) -> SC2Result<()> {
+		/* Your code here */
+		Ok(())
+	}
 }
 
 fn main() -> SC2Result<()> {
-    run_vs_computer(
-        // Pass mutable referece to your bot here.
-        &mut MyBot::default(),
-        // Opponent configuration.
-        Computer::new(Race::Random, Difficulty::VeryEasy, None),
-        // Map name. Panics if map doesn't exists in "StarCraft II/Maps" folder.
-        "EternalEmpireLE",
-        // Additional settings:
-        // LaunchOptions {
-        //     sc2_version: Option<&str>, // Default: None - Latest available patch.
-        //     save_replay_as: Option<&str>, // Default: None - Doesn't save replay.
-        //     realtime: bool, // Default: false
-        // }
-        LaunchOptions::default(),
-    )
+	run_vs_computer(
+		// Pass mutable referece to your bot here.
+		&mut MyBot::default(),
+		// Opponent configuration.
+		Computer::new(Race::Random, Difficulty::VeryEasy, None),
+		// Map name. Panics if map doesn't exists in "StarCraft II/Maps" folder.
+		"EternalEmpireLE",
+		// Additional settings:
+		// LaunchOptions {
+		//     sc2_version: Option<&str>, // Default: None - Latest available patch.
+		//     save_replay_as: Option<&str>, // Default: None - Doesn't save replay.
+		//     realtime: bool, // Default: false
+		// }
+		LaunchOptions::default(),
+	)
 }
 ```
 
@@ -163,16 +163,16 @@ Training as much as possible marines may look like:
 ```
 // Iterating bot's barracks which are completed (ready) and not already training (idle).
 for barrack in self.units.my.structures.iter().of_type(UnitTypeId::Barracks).ready().idle() {
-    // Checking if we have enough resources and supply.
-    if self.can_afford(UnitTypeId::Marine, true) {
-        // Ordering barracks to train marine.
-        barrack.train(UnitTypeId::Marine, false);
-        // Subtracting resources and suply used to train.
-        self.subtract_resources(UnitTypeId::Marine, true);
-    // Can't afford more marines. Stopping the iterator.
-    } else {
-        break;
-    }
+	// Checking if we have enough resources and supply.
+	if self.can_afford(UnitTypeId::Marine, true) {
+		// Ordering barracks to train marine.
+		barrack.train(UnitTypeId::Marine, false);
+		// Subtracting resources and suply used to train.
+		self.subtract_resources(UnitTypeId::Marine, true);
+	// Can't afford more marines. Stopping the iterator.
+	} else {
+		break;
+	}
 }
 ```
 
@@ -184,32 +184,32 @@ let main_base = self.start_location.towards(self.game_info.map_center, 8.0);
 
 // Checking if we have enough resources to afford a barrack.
 if self.can_afford(UnitTypeId::Barracks, false)
-    // Checking if total (current + ordered) number of barracks less than we want.
-    && self.counter().all().count(UnitTypeId::Barracks) < 5
+	// Checking if total (current + ordered) number of barracks less than we want.
+	&& self.counter().all().count(UnitTypeId::Barracks) < 5
 {
-    // Finding a perfect location for a building.
-    if let Some(location) = self.find_placement(
-        UnitTypeId::Barracks,
-        main_base,
-        PlacementOptions {
-            // Step increased here to leave some space between barracks,
-            // so units won't stuck when coming out of them.
-            step: 4,
-            ..Default::default()
-        },
-    ) {
-        if let Some(builder) = self.units
-            // Finding workers which are not already building.
-            .my.workers.iter().filter(|w| !w.is_constructing())
-            // Selecting closest to our build location.
-            .closest(location)
-        {
-            // Ordering scv to build barracks finally.
-            builder.build(UnitTypeId::Barracks, location, false);
-            // Subtracting resources used to build it.
-            self.subtract_resources(UnitTypeId::Barracks, false);
-        }
-    }
+	// Finding a perfect location for a building.
+	if let Some(location) = self.find_placement(
+		UnitTypeId::Barracks,
+		main_base,
+		PlacementOptions {
+			// Step increased here to leave some space between barracks,
+			// so units won't stuck when coming out of them.
+			step: 4,
+			..Default::default()
+		},
+	) {
+		if let Some(builder) = self.units
+			// Finding workers which are not already building.
+			.my.workers.iter().filter(|w| !w.is_constructing())
+			// Selecting closest to our build location.
+			.closest(location)
+		{
+			// Ordering scv to build barracks finally.
+			builder.build(UnitTypeId::Barracks, location, false);
+			// Subtracting resources used to build it.
+			self.subtract_resources(UnitTypeId::Barracks, false);
+		}
+	}
 }
 ```
 
@@ -218,23 +218,23 @@ Building new CCs might look like:
 ```
 // Checking if we have enough minerals for new expand.
 if self.can_afford(UnitTypeId::CommandCenter, false)
-    // Checking if we not already building new base.
-    && self.counter().ordered().count(UnitTypeId::CommandCenter) == 0
+	// Checking if we not already building new base.
+	&& self.counter().ordered().count(UnitTypeId::CommandCenter) == 0
 {
-    // Getting next closest expansion
-    if let Some(expansion) = self.get_expansion() {
-        if let Some(builder) = self.units
-            // Finding workers which are not already building.
-            .my.workers.iter().filter(|w| !w.is_constructing())
-            // Selecting closest to our build location.
-            .closest(location)
-        {
-            // Ordering scv to build new base.
-            builder.build(UnitTypeId::CommandCenter, expansion.loc, false);
-            // Subtracting resources used to build CC.
-            self.subtract_resources(UnitTypeId::CommandCenter, false);
-        }
-    }
+	// Getting next closest expansion
+	if let Some(expansion) = self.get_expansion() {
+		if let Some(builder) = self.units
+			// Finding workers which are not already building.
+			.my.workers.iter().filter(|w| !w.is_constructing())
+			// Selecting closest to our build location.
+			.closest(location)
+		{
+			// Ordering scv to build new base.
+			builder.build(UnitTypeId::CommandCenter, expansion.loc, false);
+			// Subtracting resources used to build CC.
+			self.subtract_resources(UnitTypeId::CommandCenter, false);
+		}
+	}
 }
 ```
 
@@ -245,27 +245,27 @@ let main_base = self.start_location.towards(self.game_info.map_center, 8.0);
 let marines = self.units.my.units.iter().of_type(UnitTypeId::Marine).idle();
 
 if self.counter().count(UnitTypeId::Marine) >= 15 {
-    let targets = &self.units.enemy.all;
-    if targets.is_empty() {
-        for m in marines {
-            m.attack(Target::Pos(self.enemy_start), false);
-        }
-    } else {
-        for m in marines {
-            m.attack(Target::Tag(targets.closest(m)?.tag()), false);
-        }
-    }
+	let targets = &self.units.enemy.all;
+	if targets.is_empty() {
+		for m in marines {
+			m.attack(Target::Pos(self.enemy_start), false);
+		}
+	} else {
+		for m in marines {
+			m.attack(Target::Tag(targets.closest(m)?.tag()), false);
+		}
+	}
 } else {
-    let targets = self.units.enemy.all.closer(25.0, self.start_location);
-    if targets.is_empty() {
-        for m in marines {
-            m.move_to(Target::Pos(self.main_base), false);
-        }
-    } else {
-        for m in marines {
-            m.attack(Target::Tag(targets.closest(m)?.tag()), false);
-        }
-    }
+	let targets = self.units.enemy.all.closer(25.0, self.start_location);
+	if targets.is_empty() {
+		for m in marines {
+			m.move_to(Target::Pos(self.main_base), false);
+		}
+	} else {
+		for m in marines {
+			m.attack(Target::Tag(targets.closest(m)?.tag()), false);
+		}
+	}
 }
 ```
 
@@ -288,11 +288,11 @@ some examples already have fully functional parser.
 Then call [`run_ladder_game`](client::run_ladder_game) this way:
 ```
 run_ladder_game(
-    &mut bot,
-    ladder_server, // Should be 127.0.0.1 by default.
-    game_port,
-    start_port,
-    opponent_id, // Or `None`.
+	&mut bot,
+	ladder_server, // Should be 127.0.0.1 by default.
+	game_port,
+	start_port,
+	opponent_id, // Or `None`.
 )
 ```
 
@@ -402,14 +402,14 @@ Usage:
 struct MyBot;
 
 impl MyBot {
-    fn my_func(&self) {
-        println!("my race: {:?}", self.race);
-        println!("current \"game_step\": {}", self.game_step());
-    }
-    fn my_func_mut(&mut self) {
-        self.chat("It works!");
-        self.set_game_step(8);
-    }
+	fn my_func(&self) {
+		println!("my race: {:?}", self.race);
+		println!("current \"game_step\": {}", self.game_step());
+	}
+	fn my_func_mut(&mut self) {
+		self.chat("It works!");
+		self.set_game_step(8);
+	}
 }
 ```
 
@@ -443,19 +443,19 @@ struct MyBot;
 Expands to:
 ```
 struct MyBot {
-    _bot: Bot,
+	_bot: Bot,
 }
 impl Deref for MyBot {
-    type Target = Bot;
+	type Target = Bot;
 
-    fn deref(&self) -> &Self::Target {
-        &self._bot
-    }
+	fn deref(&self) -> &Self::Target {
+		&self._bot
+	}
 }
 impl DerefMut for MyBot {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self._bot
-    }
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self._bot
+	}
 }
 ```
 
@@ -463,28 +463,28 @@ And this:
 ```
 #[bot]
 struct MyBot {
-    field: Type,
-    field2: Type2,
+	field: Type,
+	field2: Type2,
 }
 ```
 Expands to:
 ```
 struct MyBot {
-    _bot: Bot,
-    field: Type,
-    field2: Type2,
+	_bot: Bot,
+	field: Type,
+	field2: Type2,
 }
 impl Deref for MyBot {
-    type Target = Bot;
+	type Target = Bot;
 
-    fn deref(&self) -> &Self::Target {
-        &self._bot
-    }
+	fn deref(&self) -> &Self::Target {
+		&self._bot
+	}
 }
 impl DerefMut for MyBot {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self._bot
-    }
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self._bot
+	}
 }
 ```
 */
@@ -500,10 +500,10 @@ Usage:
 struct MyBot;
 
 impl MyBot {
-    #[bot_new]
-    fn new() -> MyBot {
-        MyBot
-    }
+	#[bot_new]
+	fn new() -> MyBot {
+		MyBot
+	}
 }
 ```
 If your bot implements `Default` then you don't need it, since [`Bot`](bot::Bot)
@@ -519,19 +519,19 @@ let bot = MyBot::default();
 #[bot]
 #[derive(Default)]
 struct MyBot {
-    field: Type,
-    field2: Type2,
-    field_n: TypeN,
+	field: Type,
+	field2: Type2,
+	field_n: TypeN,
 }
 
 impl MyBot {
-    fn new() -> MyBot {
-        MyBot {
-            field: Type::init(),
-            field2: Type2::init(),
-            ..Default::default(),
-        }
-    }
+	fn new() -> MyBot {
+		MyBot {
+			field: Type::init(),
+			field2: Type2::init(),
+			..Default::default(),
+		}
+	}
 }
 
 let bot = MyBot::new();
@@ -545,24 +545,24 @@ This:
 struct MyBot;
 
 impl MyBot {
-    #[bot_new]
-    fn new() -> MyBot {
-        MyBot
-    }
+	#[bot_new]
+	fn new() -> MyBot {
+		MyBot
+	}
 }
 ```
 Expands to:
 ```
 struct MyBot {
-    _bot: Bot,
+	_bot: Bot,
 }
 
 impl MyBot {
-    fn new() -> MyBot {
-        MyBot {
-            _bot: Default::default(),
-        }
-    }
+	fn new() -> MyBot {
+		MyBot {
+			_bot: Default::default(),
+		}
+	}
 }
 ```
 
@@ -570,36 +570,36 @@ And this:
 ```
 #[bot]
 struct MyBot {
-    field: Type,
-    field2: Type2,
+	field: Type,
+	field2: Type2,
 }
 
 impl MyBot {
-    #[bot_new]
-    fn new() -> MyBot {
-        MyBot {
-            field: Type::init(),
-            field2: Type2::init(),
-        }
-    }
+	#[bot_new]
+	fn new() -> MyBot {
+		MyBot {
+			field: Type::init(),
+			field2: Type2::init(),
+		}
+	}
 }
 ```
 Expands to:
 ```
 struct MyBot {
-    _bot: Bot,
-    field: Type,
-    field2: Type2,
+	_bot: Bot,
+	field: Type,
+	field2: Type2,
 }
 
 impl MyBot {
-    fn new() -> MyBot {
-        MyBot {
-            _bot: Default::default(),
-            field: Type::init(),
-            field2: Type2::init(),
-        }
-    }
+	fn new() -> MyBot {
+		MyBot {
+			_bot: Default::default(),
+			field: Type::init(),
+			field2: Type2::init(),
+		}
+	}
 }
 ```
 */
@@ -741,6 +741,19 @@ where
 
 trait IntoProto<T> {
 	fn into_proto(self) -> T;
+}
+
+pub trait IntoProtoField<T> {
+	fn into_proto_field(self) -> ::protobuf::MessageField<T>;
+}
+
+impl<T, U> IntoProtoField<U> for T
+where
+	T: IntoProto<U>,
+{
+	fn into_proto_field(self) -> ::protobuf::MessageField<U> {
+		::protobuf::MessageField::<U>(Some(Box::new(self.into_proto())))
+	}
 }
 
 /*trait FromSC2<T> {

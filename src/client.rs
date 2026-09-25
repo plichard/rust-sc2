@@ -142,12 +142,12 @@ where
 		req_create_game.set_realtime(self.realtime);
 
 		let res = api.send(req)?;
-		let res_create_game = res.get_create_game();
+		let res_create_game = res.create_game();
 		if res_create_game.has_error() {
 			let err = format!(
 				"{:?}: {}",
-				res_create_game.get_error(),
-				res_create_game.get_error_details()
+				res_create_game.error(),
+				res_create_game.error_details()
 			);
 			error!("{}", err);
 			panic!("{}", err);
@@ -268,12 +268,12 @@ where
 		req_create_game.set_realtime(self.realtime);
 
 		let res = human_api.send(req)?;
-		let res_create_game = res.get_create_game();
+		let res_create_game = res.create_game();
 		if res_create_game.has_error() {
 			let err = format!(
 				"{:?}: {}",
-				res_create_game.get_error(),
-				res_create_game.get_error_details()
+				res_create_game.error(),
+				res_create_game.error_details()
 			);
 			error!("{}", err);
 			panic!("{}", err);
@@ -527,23 +527,23 @@ fn create_player_setup(settings: &PlayerSettings, req_create_game: &mut RequestC
 	let mut setup = PlayerSetup::new();
 
 	setup.set_race(settings.race.into_proto());
-	setup.set_field_type(PlayerType::Participant);
+	setup.set_type(PlayerType::Participant);
 	if let Some(name) = &settings.name {
 		setup.set_player_name(name.to_string());
 	}
-	req_create_game.mut_player_setup().push(setup);
+	req_create_game.player_setup.push(setup);
 }
 
 fn create_computer_setup(computer: &Computer, req_create_game: &mut RequestCreateGame) {
 	let mut setup = PlayerSetup::new();
 
 	setup.set_race(computer.race.into_proto());
-	setup.set_field_type(PlayerType::Computer);
+	setup.set_type(PlayerType::Computer);
 	setup.set_difficulty(computer.difficulty.into_proto());
 	if let Some(ai_build) = computer.ai_build {
 		setup.set_ai_build(ai_build.into_proto());
 	}
-	req_create_game.mut_player_setup().push(setup);
+	req_create_game.player_setup.push(setup);
 }
 
 fn join_game(settings: &PlayerSettings, api: &API, ports: Option<&Ports>) -> SC2Result<u32> {
@@ -556,7 +556,7 @@ fn join_game2(settings: &PlayerSettings, api: &API, ports: Option<&Ports>) -> SC
 
 	req_join_game.set_race(settings.race.into_proto());
 
-	let options = req_join_game.mut_options();
+	let options = req_join_game.options.mut_or_insert_default();
 	options.set_raw(true);
 	options.set_score(true);
 	// options.mut_feature_layer()
@@ -573,11 +573,11 @@ fn join_game2(settings: &PlayerSettings, api: &API, ports: Option<&Ports>) -> SC
 	if let Some(ports) = ports {
 		// req_join_game.set_shared_port(ports.shared);
 
-		let server_ports = req_join_game.mut_server_ports();
+		let server_ports = req_join_game.server_ports.mut_or_insert_default();
 		server_ports.set_game_port(ports.server.0);
 		server_ports.set_base_port(ports.server.1);
 
-		let client_ports = req_join_game.mut_client_ports();
+		let client_ports = &mut req_join_game.client_ports;
 		for client in &ports.client {
 			let mut port_set = PortSet::new();
 			port_set.set_game_port(client.0);
@@ -592,13 +592,13 @@ fn join_game2(settings: &PlayerSettings, api: &API, ports: Option<&Ports>) -> SC
 fn wait_join(api: &API) -> SC2Result<u32> {
 	let res = api.wait_response()?;
 
-	let res_join_game = res.get_join_game();
+	let res_join_game = res.join_game();
 	if res_join_game.has_error() {
-		let err = ProtoError::new(res_join_game.get_error(), res_join_game.get_error_details());
+		let err = ProtoError::new(res_join_game.error(), res_join_game.error_details());
 		error!("{}", err);
 		Err(Box::new(err))
 	} else {
-		Ok(res_join_game.get_player_id())
+		Ok(res_join_game.player_id())
 	}
 }
 
@@ -611,7 +611,7 @@ where
 	let res = bot.api().send(req)?;
 
 	bot.init_data_for_unit();
-	let events = update_state(bot, res.get_observation())?;
+	let events = update_state(bot, res.observation())?;
 	bot.prepare_start();
 	bot.prepare_step();
 
@@ -623,7 +623,7 @@ where
 	let bot_actions = bot.get_actions();
 	if !bot_actions.is_empty() {
 		let mut req = Request::new();
-		let actions = req.mut_action().mut_actions();
+		let actions = &mut req.mut_action().actions;
 		for a in bot_actions {
 			actions.push(a.into_proto());
 		}
@@ -646,16 +646,16 @@ where
 	req.mut_observation().set_disable_fog(bot.disable_fog);
 	let res = bot.api().send(req)?;
 
-	if matches!(res.get_status(), Status::ended) {
-		let result = res.get_observation().get_player_result()[bot.player_id as usize - 1]
-			.get_result()
+	if matches!(res.status(), Status::ended) {
+		let result = res.observation().player_result[bot.player_id as usize - 1]
+			.result()
 			.into_sc2();
 		debug!("Result for bot: {:?}", result);
 		bot.on_end(result)?;
 		return Ok(false);
 	}
 
-	let events = update_state(bot, res.get_observation())?;
+	let events = update_state(bot, res.observation())?;
 	bot.prepare_step();
 
 	for e in events {
@@ -673,7 +673,7 @@ where
 	if !bot_actions.is_empty() {
 		// println!("{:?}: {:?}", iteration, bot_actions);
 		let mut req = Request::new();
-		let actions = req.mut_action().mut_actions();
+		let actions = &mut req.mut_action().actions;
 		for a in bot_actions {
 			actions.push(a.into_proto());
 		}
@@ -691,7 +691,7 @@ where
 	let bot_debug_commands = bot.get_debug_commands();
 	if !bot_debug_commands.is_empty() {
 		let mut req = Request::new();
-		let debug_commands = req.mut_debug().mut_debug();
+		let debug_commands = &mut req.mut_debug().debug;
 		for cmd in bot_debug_commands {
 			debug_commands.push(cmd.into_proto())
 		}
@@ -717,7 +717,7 @@ fn save_replay(api: &API, path: &str) -> SC2Result<()> {
 		path.push_str(".SC2Replay");
 	}
 	let mut file = File::create(path)?;
-	file.write_all(res.get_save_replay().get_data())?;
+	file.write_all(res.save_replay().data())?;
 	Ok(())
 }
 

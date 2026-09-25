@@ -9,11 +9,10 @@ readme = "README.md"
 license = "MIT"
 
 [dependencies]
-sc2-proto = "0.2.3"
-# sc2-proto = { path = "../sc2-proto-rs" }
+sc2-proto = { git = "https://github.com/plichard/sc2-proto-rs.git", rev = "6340fef080282849e1dadd041b8a28e19c0a6355" }
 sc2-macro = { path = "sc2-macro", version = "1" }
 tungstenite = { version = "^0.17.0", default-features = false }
-protobuf = "^2.17.0"
+protobuf = "3.7.2"
 ndarray = "^0.15.1"
 num-traits = "^0.2.12"
 num-derive = "^0.3.1"
@@ -38,7 +37,6 @@ regex = "^1.3.9"
 clap = { version = "4", features = ["derive"] }
 
 [features]
-protoc = ["sc2-proto/protoc-rust"]
 enemies_cache = []
 wine_sc2 = []
 rayon = ["dep:rayon", "indexmap/rayon", "ndarray/rayon"]

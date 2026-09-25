@@ -25,7 +25,7 @@ use once_cell::sync::Lazy;
 use rustc_hash::{FxHashMap, FxHashSet};
 use sc2_proto::raw::{
 	CloakState as ProtoCloakState, DisplayType as ProtoDisplayType, Unit as ProtoUnit,
-	UnitOrder_oneof_target as ProtoTarget,
+	unit_order::Target as ProtoTarget,
 };
 
 #[derive(Default, Clone)]
@@ -133,11 +133,11 @@ impl Unit {
 	}
 
 	/// Unique and constant for each unit tag. Used to find exactly the same unit in bunch of [`Units`].
-	/// See also [`get`], [`get_mut`] and [`find_tags`].
+	/// See also [`get`], [`mut`] and [`find_tags`].
 	///
 	/// [`Units`]: crate::units::Units
 	/// [`get`]: crate::units::Units::get
-	/// [`get_mut`]: crate::units::Units::get_mut
+	/// [`mut`]: crate::units::Units::mut
 	/// [`find_tags`]: crate::units::Units::find_tags
 	#[inline]
 	pub fn tag(&self) -> u64 {
@@ -1217,8 +1217,8 @@ impl Unit {
 	/// [`real_range_vs`]: Self::real_range_vs
 	/// [`real_ground_range`]: Self::real_ground_range
 	/// [`real_air_range`]: Self::real_air_range
-	pub fn calculate_weapon_abstract(&self, target_type: TargetType, attributes: &[Attribute]) -> (f32, f32) {
-		self.calculate_weapon_stats(CalcTarget::Abstract(target_type, attributes))
+	pub fn calculate_weapon_abstract(&self, tartype: TargetType, attributes: &[Attribute]) -> (f32, f32) {
+		self.calculate_weapon_stats(CalcTarget::Abstract(tartype, attributes))
 	}
 
 	/// Returns (dps, range) of unit's weapon vs given target (can be unit or abstract)
@@ -1232,7 +1232,7 @@ impl Unit {
 	/// [`real_air_range`]: Self::real_air_range
 	#[allow(clippy::mut_range_bound)]
 	pub fn calculate_weapon_stats(&self, target: CalcTarget) -> (f32, f32) {
-		let (upgrades, target_upgrades) = {
+		let (upgrades, tarupgrades) = {
 			let my_upgrades = self.data.upgrades.read_lock();
 			let enemy_upgrades = self.data.enemy_upgrades.read_lock();
 			if self.is_mine() {
@@ -1242,16 +1242,16 @@ impl Unit {
 			}
 		};
 
-		let (not_target, attributes, target_unit) = match target {
+		let (not_target, attributes, tarunit) = match target {
 			CalcTarget::Unit(target) => {
 				let mut enemy_armor = target.armor() + target.armor_upgrade_level();
 				let mut enemy_shield_armor = target.shield_upgrade_level();
 
-				let mut target_has_guardian_shield = false;
+				let mut tarhas_guardian_shield = false;
 
 				for buff in target.buffs() {
 					match buff {
-						BuffId::GuardianShield => target_has_guardian_shield = true,
+						BuffId::GuardianShield => tarhas_guardian_shield = true,
 						_ => {
 							if *buff == ANTI_ARMOR_BUFF {
 								enemy_armor -= 3;
@@ -1261,16 +1261,16 @@ impl Unit {
 					}
 				}
 
-				if !target_upgrades.is_empty() {
+				if !tarupgrades.is_empty() {
 					if target.race().is_terran() {
-						if target.is_structure() && target_upgrades.contains(&UpgradeId::TerranBuildingArmor)
+						if target.is_structure() && tarupgrades.contains(&UpgradeId::TerranBuildingArmor)
 						{
 							enemy_armor += 2;
 						}
 					} else if matches!(
 						target.type_id(),
 						UnitTypeId::Ultralisk | UnitTypeId::UltraliskBurrowed
-					) && target_upgrades.contains(&UpgradeId::ChitinousPlating)
+					) && tarupgrades.contains(&UpgradeId::ChitinousPlating)
 					{
 						enemy_armor += 2;
 					}
@@ -1289,12 +1289,12 @@ impl Unit {
 						target,
 						enemy_armor,
 						enemy_shield_armor,
-						target_has_guardian_shield,
+						tarhas_guardian_shield,
 					)),
 				)
 			}
-			CalcTarget::Abstract(target_type, attributes) => (
-				match target_type {
+			CalcTarget::Abstract(tartype, attributes) => (
+				match tartype {
 					TargetType::Any => TargetType::Any,
 					TargetType::Ground => TargetType::Air,
 					TargetType::Air => TargetType::Ground,
@@ -1402,14 +1402,14 @@ impl Unit {
 			}
 
 			// Subtract damage
-			match target_unit {
-				Some((target, enemy_armor, enemy_shield_armor, target_has_guardian_shield)) => {
+			match tarunit {
+				Some((target, enemy_armor, enemy_shield_armor, tarhas_guardian_shield)) => {
 					let mut attacks = w.attacks;
 					let mut shield_damage = 0;
 					let mut health_damage = 0;
 
 					if let Some(enemy_shield) = target.shield().filter(|shield| shield > &0) {
-						let enemy_shield_armor = if target_has_guardian_shield && range >= 2.0 {
+						let enemy_shield_armor = if tarhas_guardian_shield && range >= 2.0 {
 							enemy_shield_armor + 2
 						} else {
 							enemy_shield_armor
@@ -1427,7 +1427,7 @@ impl Unit {
 					}
 
 					if let Some(enemy_health) = target.health().filter(|health| health > &0) {
-						let enemy_armor = if target_has_guardian_shield && range >= 2.0 {
+						let enemy_armor = if tarhas_guardian_shield && range >= 2.0 {
 							enemy_armor + 2
 						} else {
 							enemy_armor
@@ -1556,14 +1556,14 @@ impl Unit {
 		self.orders().first().map_or(Target::None, |order| order.target)
 	}
 	/// Returns target point of unit's order if any.
-	pub fn target_pos(&self) -> Option<Point2> {
+	pub fn tarpos(&self) -> Option<Point2> {
 		match self.target() {
 			Target::Pos(pos) => Some(pos),
 			_ => None,
 		}
 	}
 	/// Returns target tag of unit's order if any.
-	pub fn target_tag(&self) -> Option<u64> {
+	pub fn tartag(&self) -> Option<u64> {
 		match self.target() {
 			Target::Tag(tag) => Some(tag),
 			_ => None,
@@ -1778,9 +1778,7 @@ impl Unit {
 	}
 	/// Orders unit to execute given command.
 	pub fn command(&self, ability: AbilityId, target: Target, queue: bool) {
-		let mut lock = self.data
-			.commander
-			.write_lock();
+		let mut lock = self.data.commander.write_lock();
 
 		for (a, t, q, u) in &mut lock.commands {
 			// if the same command is already issued for another unit, add ourselves to it
@@ -1925,17 +1923,17 @@ impl From<Unit> for Point2 {
 
 impl Unit {
 	pub(crate) fn from_proto(data: SharedUnitData, visibility: &VisibilityMap, u: &ProtoUnit) -> Self {
-		let pos = u.get_pos();
+		let pos = u.pos.get_or_default();
 		let position = Point2::from_proto(pos);
 		let type_id = {
-			let id = u.get_unit_type();
+			let id = u.unit_type();
 			UnitTypeId::from_u32(id).unwrap_or_else(|| panic!("There's no `UnitTypeId` with value {}", id))
 		};
-		let is_burrowed = u.get_is_burrowed();
+		let is_burrowed = u.is_burrowed();
 		let (is_cloaked, is_revealed) = if is_burrowed {
 			(true, false)
 		} else {
-			match u.get_cloak() {
+			match u.cloak() {
 				ProtoCloakState::CloakedUnknown | ProtoCloakState::NotCloaked => (false, false),
 				ProtoCloakState::Cloaked | ProtoCloakState::CloakedAllied => (true, false),
 				ProtoCloakState::CloakedDetected => (true, true),
@@ -1944,7 +1942,7 @@ impl Unit {
 		Self {
 			data,
 			base: Rs::new(UnitBase {
-				display_type: Rl::new(match DisplayType::from_proto(u.get_display_type()) {
+				display_type: Rl::new(match DisplayType::from_proto(u.display_type()) {
 					DisplayType::Visible => {
 						if visibility
 							.get(<(usize, usize)>::from(position))
@@ -1957,19 +1955,19 @@ impl Unit {
 					}
 					x => x,
 				}),
-				alliance: Alliance::from_proto(u.get_alliance()),
-				tag: u.get_tag(),
+				alliance: Alliance::from_proto(u.alliance()),
+				tag: u.tag(),
 				type_id: Rl::new(type_id),
-				owner: u.get_owner() as u32,
+				owner: u.owner() as u32,
 				position,
-				position3d: Point3::from_proto(pos),
-				facing: u.get_facing(),
-				radius: u.get_radius(),
-				build_progress: u.get_build_progress(),
+				position3d: Point3::from_proto(&pos),
+				facing: u.facing(),
+				radius: u.radius(),
+				build_progress: u.build_progress(),
 				is_cloaked: LockBool::new(is_cloaked),
 				is_revealed: LockBool::new(is_revealed),
 				buffs: u
-					.get_buff_ids()
+					.buff_ids
 					.iter()
 					.map(|b| {
 						BuffId::from_u32(*b).unwrap_or_else(|| panic!("There's no `BuffId` with value {}", b))
@@ -1978,17 +1976,17 @@ impl Unit {
 				detect_range: match type_id {
 					UnitTypeId::Observer => 11.0,
 					UnitTypeId::ObserverSiegeMode => 13.75,
-					_ => u.get_detect_range(),
+					_ => u.detect_range(),
 				},
-				radar_range: u.get_radar_range(),
-				is_selected: u.get_is_selected(),
-				is_on_screen: u.get_is_on_screen(),
-				is_blip: u.get_is_blip(),
-				is_powered: u.get_is_powered(),
-				is_active: u.get_is_active(),
-				attack_upgrade_level: u.get_attack_upgrade_level() as u32,
-				armor_upgrade_level: u.get_armor_upgrade_level(),
-				shield_upgrade_level: u.get_shield_upgrade_level(),
+				radar_range: u.radar_range(),
+				is_selected: u.is_selected(),
+				is_on_screen: u.is_on_screen(),
+				is_blip: u.is_blip(),
+				is_powered: u.is_powered(),
+				is_active: u.is_active(),
+				attack_upgrade_level: u.attack_upgrade_level() as u32,
+				armor_upgrade_level: u.armor_upgrade_level(),
+				shield_upgrade_level: u.shield_upgrade_level(),
 				// Not populated for snapshots
 				health: u.health.map(|x| x as u32),
 				health_max: u.health_max.map(|x| x as u32),
@@ -1998,43 +1996,44 @@ impl Unit {
 				energy_max: u.energy_max.map(|x| x as u32),
 				mineral_contents: u.mineral_contents.map(|x| x as u32),
 				vespene_contents: u.vespene_contents.map(|x| x as u32),
-				is_flying: u.get_is_flying(),
+				is_flying: u.is_flying(),
 				is_burrowed: LockBool::new(is_burrowed),
-				is_hallucination: LockBool::new(u.get_is_hallucination()),
+				is_hallucination: LockBool::new(u.is_hallucination()),
 				// Not populated for enemies
 				orders: u
-					.get_orders()
+					.orders
 					.iter()
 					.map(|order| UnitOrder {
 						ability: {
-							let id = order.get_ability_id();
+							let id = order.ability_id();
 							AbilityId::from_u32(id)
 								.unwrap_or_else(|| panic!("There's no `AbilityId` with value {}", id))
 						},
 						target: match &order.target {
-							Some(ProtoTarget::target_world_space_pos(pos)) => {
+							Some(ProtoTarget::TargetWorldSpacePos(pos)) => {
 								Target::Pos(Point2::from_proto(pos))
 							}
-							Some(ProtoTarget::target_unit_tag(tag)) => Target::Tag(*tag),
+							Some(ProtoTarget::TargetUnitTag(tag)) => Target::Tag(*tag),
+							Some(_) => panic!("Unhandled target"),
 							None => Target::None,
 						},
-						progress: order.get_progress(),
+						progress: order.progress(),
 					})
 					.collect(),
 				addon_tag: u.add_on_tag,
 				passengers: u
-					.get_passengers()
+					.passengers
 					.iter()
 					.map(|p| PassengerUnit {
-						tag: p.get_tag(),
-						health: p.get_health(),
-						health_max: p.get_health_max(),
-						shield: p.get_shield(),
-						shield_max: p.get_shield_max(),
-						energy: p.get_energy(),
-						energy_max: p.get_energy_max(),
+						tag: p.tag(),
+						health: p.health(),
+						health_max: p.health_max(),
+						shield: p.shield(),
+						shield_max: p.shield_max(),
+						energy: p.energy(),
+						energy_max: p.energy_max(),
 						type_id: {
-							let id = p.get_unit_type();
+							let id = p.unit_type();
 							UnitTypeId::from_u32(id)
 								.unwrap_or_else(|| panic!("There's no `UnitTypeId` with value {}", id))
 						},
@@ -2049,10 +2048,10 @@ impl Unit {
 				buff_duration_remain: u.buff_duration_remain.map(|x| x as u32),
 				buff_duration_max: u.buff_duration_max.map(|x| x as u32),
 				rally_targets: u
-					.get_rally_targets()
+					.rally_targets
 					.iter()
 					.map(|t| RallyTarget {
-						point: Point2::from_proto(t.get_point()),
+						point: Point2::from_proto(t.point.get_or_default()),
 						tag: t.tag,
 					})
 					.collect(),

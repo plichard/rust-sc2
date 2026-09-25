@@ -1,7 +1,9 @@
 //! SC2 Score interface.
 
 use crate::{FromProto, IntoSC2};
-use sc2_proto::score::{CategoryScoreDetails, Score as ProtoScore, Score_ScoreType, VitalScoreDetails};
+use sc2_proto::score::{
+	score::ScoreType as Score_ScoreType, CategoryScoreDetails, Score as ProtoScore, VitalScoreDetails,
+};
 
 #[variant_checkers]
 #[derive(Clone, Default)]
@@ -30,11 +32,11 @@ pub struct Category {
 impl FromProto<&CategoryScoreDetails> for Category {
 	fn from_proto(category: &CategoryScoreDetails) -> Self {
 		Self {
-			none: category.get_none(),
-			army: category.get_army(),
-			economy: category.get_economy(),
-			technology: category.get_technology(),
-			upgrade: category.get_upgrade(),
+			none: category.none(),
+			army: category.army(),
+			economy: category.economy(),
+			technology: category.technology(),
+			upgrade: category.upgrade(),
 		}
 	}
 }
@@ -48,9 +50,9 @@ pub struct Vital {
 impl FromProto<&VitalScoreDetails> for Vital {
 	fn from_proto(vital: &VitalScoreDetails) -> Self {
 		Self {
-			life: vital.get_life(),
-			shields: vital.get_shields(),
-			energy: vital.get_energy(),
+			life: vital.life(),
+			shields: vital.shields(),
+			energy: vital.energy(),
 		}
 	}
 }
@@ -94,38 +96,38 @@ pub struct Score {
 }
 impl FromProto<&ProtoScore> for Score {
 	fn from_proto(score: &ProtoScore) -> Self {
-		let details = score.get_score_details();
+		let details = &score.score_details;
 		Self {
-			score_type: score.get_score_type().into_sc2(),
-			total_score: score.get_score(),
-			idle_production_time: details.get_idle_production_time(),
-			idle_worker_time: details.get_idle_worker_time(),
-			total_value_units: details.get_total_value_units(),
-			total_value_structures: details.get_total_value_structures(),
-			killed_value_units: details.get_killed_value_units(),
-			killed_value_structures: details.get_killed_value_structures(),
-			collected_minerals: details.get_collected_minerals(),
-			collected_vespene: details.get_collected_vespene(),
-			collection_rate_minerals: details.get_collection_rate_minerals(),
-			collection_rate_vespene: details.get_collection_rate_vespene(),
-			spent_minerals: details.get_spent_minerals(),
-			spent_vespene: details.get_spent_vespene(),
-			food_used: details.get_food_used().into_sc2(),
-			killed_minerals: details.get_killed_minerals().into_sc2(),
-			killed_vespene: details.get_killed_vespene().into_sc2(),
-			lost_minerals: details.get_lost_minerals().into_sc2(),
-			lost_vespene: details.get_lost_vespene().into_sc2(),
-			friendly_fire_minerals: details.get_friendly_fire_minerals().into_sc2(),
-			friendly_fire_vespene: details.get_friendly_fire_vespene().into_sc2(),
-			used_minerals: details.get_used_minerals().into_sc2(),
-			used_vespene: details.get_used_vespene().into_sc2(),
-			total_used_minerals: details.get_total_used_minerals().into_sc2(),
-			total_used_vespene: details.get_total_used_vespene().into_sc2(),
-			total_damage_dealt: details.get_total_damage_dealt().into_sc2(),
-			total_damage_taken: details.get_total_damage_taken().into_sc2(),
-			total_healed: details.get_total_healed().into_sc2(),
-			current_apm: details.get_current_apm(),
-			current_effective_apm: details.get_current_effective_apm(),
+			score_type: score.score_type().into_sc2(),
+			total_score: score.score(),
+			idle_production_time: details.idle_production_time(),
+			idle_worker_time: details.idle_worker_time(),
+			total_value_units: details.total_value_units(),
+			total_value_structures: details.total_value_structures(),
+			killed_value_units: details.killed_value_units(),
+			killed_value_structures: details.killed_value_structures(),
+			collected_minerals: details.collected_minerals(),
+			collected_vespene: details.collected_vespene(),
+			collection_rate_minerals: details.collection_rate_minerals(),
+			collection_rate_vespene: details.collection_rate_vespene(),
+			spent_minerals: details.spent_minerals(),
+			spent_vespene: details.spent_vespene(),
+			food_used: details.food_used.get_or_default().into_sc2(),
+			killed_minerals: details.killed_minerals.get_or_default().into_sc2(),
+			killed_vespene: details.killed_vespene.get_or_default().into_sc2(),
+			lost_minerals: details.lost_minerals.get_or_default().into_sc2(),
+			lost_vespene: details.lost_vespene.get_or_default().into_sc2(),
+			friendly_fire_minerals: details.friendly_fire_minerals.get_or_default().into_sc2(),
+			friendly_fire_vespene: details.friendly_fire_vespene.get_or_default().into_sc2(),
+			used_minerals: details.used_minerals.get_or_default().into_sc2(),
+			used_vespene: details.used_vespene.get_or_default().into_sc2(),
+			total_used_minerals: details.total_used_minerals.get_or_default().into_sc2(),
+			total_used_vespene: details.total_used_vespene.get_or_default().into_sc2(),
+			total_damage_dealt: details.total_damage_dealt.get_or_default().into_sc2(),
+			total_damage_taken: details.total_damage_taken.get_or_default().into_sc2(),
+			total_healed: details.total_healed.get_or_default().into_sc2(),
+			current_apm: details.current_apm(),
+			current_effective_apm: details.current_effective_apm(),
 		}
 	}
 }

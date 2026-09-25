@@ -10,9 +10,10 @@ use num_traits::FromPrimitive;
 use rustc_hash::FxHashMap;
 use sc2_proto::{
 	data::{
-		AbilityData as ProtoAbilityData, AbilityData_Target, Attribute as ProtoAttribute,
-		BuffData as ProtoBuffData, EffectData as ProtoEffectData, UnitTypeData as ProtoUnitTypeData,
-		UpgradeData as ProtoUpgradeData, Weapon as ProtoWeapon, Weapon_TargetType,
+		ability_data::Target as AbilityDataTarget, weapon::TargetType as WeaponTargetType,
+		AbilityData as ProtoAbilityData, Attribute as ProtoAttribute, BuffData as ProtoBuffData,
+		EffectData as ProtoEffectData, UnitTypeData as ProtoUnitTypeData, UpgradeData as ProtoUpgradeData,
+		Weapon as ProtoWeapon,
 	},
 	sc2api::ResponseData,
 };
@@ -39,27 +40,27 @@ impl FromProto<ResponseData> for GameData {
 	fn from_proto(data: ResponseData) -> Self {
 		Self {
 			abilities: data
-				.get_abilities()
+				.abilities
 				.iter()
 				.filter_map(|a| AbilityData::try_from_proto(a).map(|data| (data.id, data)))
 				.collect(),
 			units: data
-				.get_units()
+				.units
 				.iter()
 				.filter_map(|u| UnitTypeData::try_from_proto(u).map(|data| (data.id, data)))
 				.collect(),
 			upgrades: data
-				.get_upgrades()
+				.upgrades
 				.iter()
 				.filter_map(|u| UpgradeData::try_from_proto(u).map(|data| (data.id, data)))
 				.collect(),
 			buffs: data
-				.get_buffs()
+				.buffs
 				.iter()
 				.filter_map(|b| BuffData::try_from_proto(b).map(|data| (data.id, data)))
 				.collect(),
 			effects: data
-				.get_effects()
+				.effects
 				.iter()
 				.filter_map(|e| EffectData::try_from_proto(e).map(|data| (data.id, data)))
 				.collect(),
@@ -87,14 +88,14 @@ pub enum AbilityTarget {
 	PointOrUnit,
 	PointOrNone,
 }
-impl FromProto<AbilityData_Target> for AbilityTarget {
-	fn from_proto(target: AbilityData_Target) -> Self {
+impl FromProto<AbilityDataTarget> for AbilityTarget {
+	fn from_proto(target: AbilityDataTarget) -> Self {
 		match target {
-			AbilityData_Target::None => AbilityTarget::None,
-			AbilityData_Target::Point => AbilityTarget::Point,
-			AbilityData_Target::Unit => AbilityTarget::Unit,
-			AbilityData_Target::PointOrUnit => AbilityTarget::PointOrUnit,
-			AbilityData_Target::PointOrNone => AbilityTarget::PointOrNone,
+			AbilityDataTarget::None => AbilityTarget::None,
+			AbilityDataTarget::Point => AbilityTarget::Point,
+			AbilityDataTarget::Unit => AbilityTarget::Unit,
+			AbilityDataTarget::PointOrUnit => AbilityTarget::PointOrUnit,
+			AbilityDataTarget::PointOrNone => AbilityTarget::PointOrNone,
 		}
 	}
 }
@@ -143,12 +144,12 @@ pub enum TargetType {
 	Air,
 	Any,
 }
-impl FromProto<Weapon_TargetType> for TargetType {
-	fn from_proto(target_type: Weapon_TargetType) -> Self {
+impl FromProto<WeaponTargetType> for TargetType {
+	fn from_proto(target_type: WeaponTargetType) -> Self {
 		match target_type {
-			Weapon_TargetType::Ground => TargetType::Ground,
-			Weapon_TargetType::Air => TargetType::Air,
-			Weapon_TargetType::Any => TargetType::Any,
+			WeaponTargetType::Ground => TargetType::Ground,
+			WeaponTargetType::Air => TargetType::Air,
+			WeaponTargetType::Any => TargetType::Any,
 		}
 	}
 }
@@ -173,16 +174,16 @@ pub struct Weapon {
 impl FromProto<&ProtoWeapon> for Weapon {
 	fn from_proto(weapon: &ProtoWeapon) -> Self {
 		Self {
-			target: TargetType::from_proto(weapon.get_field_type()),
-			damage: weapon.get_damage() as u32,
+			target: TargetType::from_proto(weapon.type_()),
+			damage: weapon.damage() as u32,
 			damage_bonus: weapon
-				.get_damage_bonus()
+				.damage_bonus
 				.iter()
-				.map(|db| (Attribute::from_proto(db.get_attribute()), db.get_bonus() as u32))
+				.map(|db| (Attribute::from_proto(db.attribute()), db.bonus() as u32))
 				.collect(),
-			attacks: weapon.get_attacks(),
-			range: weapon.get_range(),
-			speed: weapon.get_speed(),
+			attacks: weapon.attacks(),
+			range: weapon.range(),
+			speed: weapon.speed(),
 		}
 	}
 }
@@ -217,20 +218,20 @@ pub struct AbilityData {
 impl TryFromProto<&ProtoAbilityData> for AbilityData {
 	fn try_from_proto(a: &ProtoAbilityData) -> Option<Self> {
 		Some(Self {
-			id: AbilityId::from_u32(a.get_ability_id())?,
-			link_name: a.get_link_name().to_string(),
-			link_index: a.get_link_index(),
+			id: AbilityId::from_u32(a.ability_id())?,
+			link_name: a.link_name().to_string(),
+			link_index: a.link_index(),
 			button_name: a.button_name.as_ref().cloned(),
 			friendly_name: a.friendly_name.as_ref().cloned(),
 			hotkey: a.hotkey.as_ref().cloned(),
 			remaps_to_ability_id: a.remaps_to_ability_id.and_then(AbilityId::from_u32),
-			available: a.get_available(),
-			target: AbilityTarget::from_proto(a.get_target()),
-			allow_minimap: a.get_allow_minimap(),
-			allow_autocast: a.get_allow_autocast(),
-			is_building: a.get_is_building(),
+			available: a.available(),
+			target: AbilityTarget::from_proto(a.target()),
+			allow_minimap: a.allow_minimap(),
+			allow_autocast: a.allow_autocast(),
+			is_building: a.is_building(),
 			footprint_radius: a.footprint_radius,
-			is_instant_placement: a.get_is_instant_placement(),
+			is_instant_placement: a.is_instant_placement(),
 			cast_range: a.cast_range,
 		})
 	}
@@ -282,36 +283,36 @@ impl UnitTypeData {
 impl TryFromProto<&ProtoUnitTypeData> for UnitTypeData {
 	fn try_from_proto(u: &ProtoUnitTypeData) -> Option<Self> {
 		Some(Self {
-			id: UnitTypeId::from_u32(u.get_unit_id())?,
-			name: u.get_name().to_string(),
-			available: u.get_available(),
-			cargo_size: u.get_cargo_size(),
-			mineral_cost: u.get_mineral_cost(),
-			vespene_cost: u.get_vespene_cost(),
-			food_required: u.get_food_required(),
-			food_provided: u.get_food_provided(),
+			id: UnitTypeId::from_u32(u.unit_id())?,
+			name: u.name().to_string(),
+			available: u.available(),
+			cargo_size: u.cargo_size(),
+			mineral_cost: u.mineral_cost(),
+			vespene_cost: u.vespene_cost(),
+			food_required: u.food_required(),
+			food_provided: u.food_provided(),
 			ability: u.ability_id.and_then(AbilityId::from_u32),
-			race: Race::from_proto(u.get_race()),
-			build_time: u.get_build_time(),
-			has_vespene: u.get_has_vespene(),
-			has_minerals: u.get_has_minerals(),
-			sight_range: u.get_sight_range(),
+			race: Race::from_proto(u.race()),
+			build_time: u.build_time(),
+			has_vespene: u.has_vespene(),
+			has_minerals: u.has_minerals(),
+			sight_range: u.sight_range(),
 			tech_alias: u
-				.get_tech_alias()
+				.tech_alias
 				.iter()
 				.filter_map(|a| UnitTypeId::from_u32(*a))
 				.collect(),
 			unit_alias: u.unit_alias.and_then(UnitTypeId::from_u32),
 			tech_requirement: u.tech_requirement.and_then(UnitTypeId::from_u32),
-			require_attached: u.get_require_attached(),
+			require_attached: u.require_attached(),
 			attributes: u
-				.get_attributes()
+				.attributes
 				.iter()
-				.map(|&a| Attribute::from_proto(a))
+				.map(|&a| Attribute::from_proto(a.enum_value_or_default()))
 				.collect(),
-			movement_speed: u.get_movement_speed(),
-			armor: u.get_armor() as i32,
-			weapons: u.get_weapons().iter().map(Weapon::from_proto).collect(),
+			movement_speed: u.movement_speed(),
+			armor: u.armor() as i32,
+			weapons: u.weapons.iter().map(Weapon::from_proto).collect(),
 		})
 	}
 }
@@ -341,12 +342,12 @@ impl UpgradeData {
 impl TryFromProto<&ProtoUpgradeData> for UpgradeData {
 	fn try_from_proto(u: &ProtoUpgradeData) -> Option<Self> {
 		Some(Self {
-			id: UpgradeId::from_u32(u.get_upgrade_id())?,
-			ability: AbilityId::from_u32(u.get_ability_id())?,
-			name: u.get_name().to_string(),
-			mineral_cost: u.get_mineral_cost(),
-			vespene_cost: u.get_vespene_cost(),
-			research_time: u.get_research_time(),
+			id: UpgradeId::from_u32(u.upgrade_id())?,
+			ability: AbilityId::from_u32(u.ability_id())?,
+			name: u.name().to_string(),
+			mineral_cost: u.mineral_cost(),
+			vespene_cost: u.vespene_cost(),
+			research_time: u.research_time(),
 		})
 	}
 }
@@ -361,8 +362,8 @@ pub struct BuffData {
 impl TryFromProto<&ProtoBuffData> for BuffData {
 	fn try_from_proto(b: &ProtoBuffData) -> Option<Self> {
 		Some(Self {
-			id: BuffId::from_u32(b.get_buff_id())?,
-			name: b.get_name().to_string(),
+			id: BuffId::from_u32(b.buff_id())?,
+			name: b.name().to_string(),
 		})
 	}
 }
@@ -382,11 +383,11 @@ pub struct EffectData {
 }
 impl TryFromProto<&ProtoEffectData> for EffectData {
 	fn try_from_proto(e: &ProtoEffectData) -> Option<Self> {
-		EffectId::from_u32(e.get_effect_id()).map(|id| Self {
+		EffectId::from_u32(e.effect_id()).map(|id| Self {
 			id,
-			name: e.get_name().to_string(),
-			friendly_name: e.get_friendly_name().to_string(),
-			radius: e.get_radius(),
+			name: e.name().to_string(),
+			friendly_name: e.friendly_name().to_string(),
+			radius: e.radius(),
 			target: match id {
 				EffectId::Null
 				| EffectId::PsiStormPersistent

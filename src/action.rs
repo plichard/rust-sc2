@@ -3,16 +3,18 @@
 use crate::{
 	geometry::{Point2, Point3},
 	ids::AbilityId,
-	FromProto, IntoProto,
+	FromProto, IntoProto, IntoProtoField,
 };
 use num_traits::{FromPrimitive, ToPrimitive};
 use rustc_hash::FxHashMap;
 use sc2_proto::{
 	error::ActionResult as ProtoActionResult,
-	raw::{ActionRawUnitCommand_oneof_target as ProtoTarget, ActionRaw_oneof_action as ProtoRawAction},
-	sc2api::{Action as ProtoAction, ActionChat_Channel, ActionError as ProtoActionError},
+	raw::action_raw::Action as ProtoRawAction,
+	raw::action_raw_unit_command::Target as ProtoTarget,
+	sc2api::{
+		action_chat::Channel as ActionChatChannel, Action as ProtoAction, ActionError as ProtoActionError,
+	},
 };
-
 // pub(crate) type Command = (u64, (AbilityId, Target, bool));
 
 #[derive(Default, Clone)]
@@ -45,35 +47,36 @@ impl IntoProto<ProtoAction> for &Action {
 		let mut action = ProtoAction::new();
 		match self {
 			Action::Chat(message, team_only) => {
-				let chat_action = action.mut_action_chat();
+				let chat_action = &mut action.action_chat.mut_or_insert_default();
+
 				chat_action.set_channel({
 					if *team_only {
-						ActionChat_Channel::Team
+						ActionChatChannel::Team
 					} else {
-						ActionChat_Channel::Broadcast
+						ActionChatChannel::Broadcast
 					}
 				});
 				chat_action.set_message(message.to_string());
 			}
 			Action::UnitCommand(ability, target, units, queue) => {
-				let unit_command = action.mut_action_raw().mut_unit_command();
+				let unit_command = action.action_raw.mut_or_insert_default().mut_unit_command();
 				unit_command.set_ability_id(ability.to_i32().unwrap());
 				match target {
 					Target::Pos(pos) => unit_command.set_target_world_space_pos(pos.into_proto()),
 					Target::Tag(tag) => unit_command.set_target_unit_tag(*tag),
 					Target::None => {}
 				}
-				unit_command.set_unit_tags(units.to_vec());
+				unit_command.unit_tags = units.to_vec();
 				unit_command.set_queue_command(*queue);
 			}
 			Action::CameraMove(pos) => {
-				let camera_move = action.mut_action_raw().mut_camera_move();
-				camera_move.set_center_world_space(pos.into_proto());
+				let camera_move = action.action_raw.mut_or_insert_default().mut_camera_move();
+				camera_move.center_world_space = Some(pos.into_proto()).into();
 			}
 			Action::ToggleAutocast(ability, units) => {
-				let toggle_autocast = action.mut_action_raw().mut_toggle_autocast();
+				let toggle_autocast = action.action_raw.mut_or_insert_default().mut_toggle_autocast();
 				toggle_autocast.set_ability_id(ability.to_i32().unwrap());
-				toggle_autocast.set_unit_tags(units.to_vec());
+				toggle_autocast.unit_tags = units.to_vec();
 			}
 		}
 		action
@@ -82,43 +85,43 @@ impl IntoProto<ProtoAction> for &Action {
 impl FromProto<&ProtoAction> for Option<Action> {
 	fn from_proto(action: &ProtoAction) -> Self {
 		// let game_loop: u32 = action.get_game_loop();
-		if action.has_action_raw() {
-			match &action.get_action_raw().action {
-				Some(ProtoRawAction::unit_command(unit_command)) => Some(Action::UnitCommand(
+		if let Some(action) = action.action_raw.action.as_ref() {
+			match action {
+				ProtoRawAction::UnitCommand(unit_command) => Some(Action::UnitCommand(
 					{
-						let id = unit_command.get_ability_id();
+						let id = unit_command.ability_id();
 						AbilityId::from_i32(id)
-							.unwrap_or_else(|| panic!("There's no `AbilityId` with value {}", id))
+							.unwrap_or_else(|| panic!("There's no `AbilityId` with value {:?}", id))
 					},
 					match &unit_command.target {
-						Some(ProtoTarget::target_world_space_pos(pos)) => {
-							Target::Pos(Point2::from_proto(pos))
-						}
-						Some(ProtoTarget::target_unit_tag(tag)) => Target::Tag(*tag),
+						Some(ProtoTarget::TargetWorldSpacePos(pos)) => Target::Pos(Point2::from_proto(pos)),
+						Some(ProtoTarget::TargetUnitTag(tag)) => Target::Tag(*tag),
 						None => Target::None,
+						_ => Target::None,
 					},
-					unit_command.get_unit_tags().to_vec(),
-					unit_command.get_queue_command(),
+					unit_command.unit_tags.clone(),
+					unit_command.queue_command.is_some(),
 				)),
-				Some(ProtoRawAction::camera_move(camera_move)) => Some(Action::CameraMove(
-					Point3::from_proto(camera_move.get_center_world_space()),
-				)),
-				Some(ProtoRawAction::toggle_autocast(toggle_autocast)) => Some(Action::ToggleAutocast(
+				ProtoRawAction::CameraMove(camera_move) => Some(Action::CameraMove(Point3::from_proto(
+					&camera_move.center_world_space,
+				))),
+				ProtoRawAction::ToggleAutocast(toggle_autocast) => Some(Action::ToggleAutocast(
 					{
-						let id = toggle_autocast.get_ability_id();
+						let id = toggle_autocast.ability_id();
 						AbilityId::from_i32(id)
 							.unwrap_or_else(|| panic!("There's no `AbilityId` with value {}", id))
 					},
-					toggle_autocast.get_unit_tags().to_vec(),
+					toggle_autocast.unit_tags.clone(),
 				)),
-				None => unreachable!(),
+				_ => {
+					panic!("Unhandled action");
+				}
 			}
-		} else if action.has_action_chat() {
-			let chat = action.get_action_chat();
-			Some(Action::Chat(chat.get_message().to_string(), {
-				match chat.get_channel() {
-					ActionChat_Channel::Broadcast => false,
-					ActionChat_Channel::Team => true,
+		} else if let Some(chat) = &action.action_chat.0 {
+			Some(Action::Chat(chat.message().to_string(), {
+				match chat.channel() {
+					ActionChatChannel::Broadcast => false,
+					ActionChatChannel::Team => true,
 				}
 			}))
 		} else {
@@ -141,12 +144,12 @@ pub struct ActionError {
 impl FromProto<&ProtoActionError> for ActionError {
 	fn from_proto(e: &ProtoActionError) -> Self {
 		Self {
-			unit: e.get_unit_tag(),
+			unit: e.unit_tag(),
 			ability: {
-				let id = e.get_ability_id();
+				let id = e.ability_id();
 				AbilityId::from_u64(id).unwrap_or_else(|| panic!("There's no `AbilityId` with value {}", id))
 			},
-			result: ActionResult::from_proto(e.get_result()),
+			result: ActionResult::from_proto(e.result()),
 		}
 	}
 }

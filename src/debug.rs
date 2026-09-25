@@ -3,13 +3,14 @@
 use crate::{
 	geometry::{Point2, Point3},
 	ids::UnitTypeId,
-	IntoProto,
+	IntoProto, IntoProtoField,
 };
 use num_traits::ToPrimitive;
 use rustc_hash::FxHashSet;
 use sc2_proto::debug::{
-	DebugBox, DebugCommand as ProtoDebugCommand, DebugDraw as ProtoDebugDraw, DebugEndGame_EndResult,
-	DebugGameState as ProtoDebugGameState, DebugLine, DebugSetUnitValue_UnitValue, DebugSphere, DebugText,
+	debug_end_game::EndResult as DebugEndGameResult, debug_set_unit_value::UnitValue as DebugSetUnitValue,
+	DebugBox, DebugCommand as ProtoDebugCommand, DebugDraw as ProtoDebugDraw,
+	DebugGameState as ProtoDebugGameState, DebugLine, DebugSphere, DebugText,
 };
 
 type Color = (u32, u32, u32);
@@ -203,14 +204,14 @@ impl IntoProto<ProtoDebugCommand> for &DebugCommand {
 				if let Some(owner) = owner {
 					unit.set_owner(*owner as i32);
 				}
-				unit.set_pos(pos.into_proto());
+				*unit.pos.mut_or_insert_default() = pos.into_proto();
 				unit.set_quantity(*count);
 			}
-			DebugCommand::KillUnit(tags) => proto.mut_kill_unit().set_tag(tags.to_vec()),
+			DebugCommand::KillUnit(tags) => proto.mut_kill_unit().tag = tags.to_vec(),
 			DebugCommand::EndGame(win) => {
 				let end_game = proto.mut_end_game();
 				if *win {
-					end_game.set_end_result(DebugEndGame_EndResult::DeclareVictory);
+					end_game.set_end_result(DebugEndGameResult::DeclareVictory);
 				}
 			}
 			DebugCommand::SetUnitValue(tag, unit_value, value) => {
@@ -234,14 +235,14 @@ impl IntoProto<ProtoDebugDraw> for &[DebugDraw] {
 					proto_text.set_text(text.to_string());
 					match pos {
 						DebugPos::Screen((x, y)) => {
-							let pos = proto_text.mut_virtual_pos();
+							let pos = proto_text.virtual_pos.mut_or_insert_default();
 							pos.set_x(*x);
 							pos.set_y(*y);
 						}
-						DebugPos::World(p) => proto_text.set_world_pos(p.into_proto()),
+						DebugPos::World(p) => proto_text.world_pos = p.into_proto_field(),
 					}
 					if let Some((r, g, b)) = color {
-						let proto_color = proto_text.mut_color();
+						let proto_color = proto_text.color.mut_or_insert_default();
 						proto_color.set_r(*r);
 						proto_color.set_g(*g);
 						proto_color.set_b(*b);
@@ -249,44 +250,44 @@ impl IntoProto<ProtoDebugDraw> for &[DebugDraw] {
 					if let Some(s) = size {
 						proto_text.set_size(*s);
 					}
-					cmds.mut_text().push(proto_text);
+					cmds.text.push(proto_text);
 				}
 				DebugDraw::Line(p0, p1, color) => {
 					let mut proto_line = DebugLine::new();
-					let line = proto_line.mut_line();
-					line.set_p0(p0.into_proto());
-					line.set_p1(p1.into_proto());
+					let line = proto_line.line.mut_or_insert_default();
+					line.p0 = p0.into_proto_field();
+					line.p1 = p1.into_proto_field();
 					if let Some((r, g, b)) = color {
-						let proto_color = proto_line.mut_color();
+						let proto_color = proto_line.color.mut_or_insert_default();
 						proto_color.set_r(*r);
 						proto_color.set_g(*g);
 						proto_color.set_b(*b);
 					}
-					cmds.mut_lines().push(proto_line);
+					cmds.lines.push(proto_line);
 				}
 				DebugDraw::Box(p0, p1, color) => {
 					let mut proto_box = DebugBox::new();
-					proto_box.set_min(p0.into_proto());
-					proto_box.set_max(p1.into_proto());
+					proto_box.min = p0.into_proto_field();
+					proto_box.max = p1.into_proto_field();
 					if let Some((r, g, b)) = color {
-						let proto_color = proto_box.mut_color();
+						let proto_color = proto_box.color.mut_or_insert_default();
 						proto_color.set_r(*r);
 						proto_color.set_g(*g);
 						proto_color.set_b(*b);
 					}
-					cmds.mut_boxes().push(proto_box);
+					cmds.boxes.push(proto_box);
 				}
 				DebugDraw::Sphere(pos, radius, color) => {
 					let mut proto_sphere = DebugSphere::new();
-					proto_sphere.set_p(pos.into_proto());
-					proto_sphere.set_r(*radius);
+					proto_sphere.p = pos.into_proto_field();
+					proto_sphere.r = Some(*radius);
 					if let Some((r, g, b)) = color {
-						let proto_color = proto_sphere.mut_color();
+						let proto_color = proto_sphere.color.mut_or_insert_default();
 						proto_color.set_r(*r);
 						proto_color.set_g(*g);
 						proto_color.set_b(*b);
 					}
-					cmds.mut_spheres().push(proto_sphere);
+					cmds.spheres.push(proto_sphere);
 				}
 			}
 		}
@@ -316,12 +317,12 @@ pub enum UnitValue {
 	Health,
 	Shield,
 }
-impl IntoProto<DebugSetUnitValue_UnitValue> for UnitValue {
-	fn into_proto(self) -> DebugSetUnitValue_UnitValue {
+impl IntoProto<DebugSetUnitValue> for UnitValue {
+	fn into_proto(self) -> DebugSetUnitValue {
 		match self {
-			UnitValue::Energy => DebugSetUnitValue_UnitValue::Energy,
-			UnitValue::Health => DebugSetUnitValue_UnitValue::Life,
-			UnitValue::Shield => DebugSetUnitValue_UnitValue::Shields,
+			UnitValue::Energy => DebugSetUnitValue::Energy,
+			UnitValue::Health => DebugSetUnitValue::Life,
+			UnitValue::Shield => DebugSetUnitValue::Shields,
 		}
 	}
 }

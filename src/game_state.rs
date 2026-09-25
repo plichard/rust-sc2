@@ -48,105 +48,105 @@ where
 
 	// let player_result = response_observation.get_player_result();
 	state.actions = response_observation
-		.get_actions()
+		.actions
 		.iter()
 		.filter_map(Option::<Action>::from_proto)
 		.collect();
 	state.action_errors = response_observation
-		.get_action_errors()
+		.action_errors
 		.iter()
 		.map(ActionError::from_proto)
 		.collect();
 	state.chat = response_observation
-		.get_chat()
+		.chat
 		.iter()
 		.map(|m| ChatMessage {
-			player_id: m.get_player_id(),
-			message: m.get_message().to_string(),
+			player_id: m.player_id(),
+			message: m.message().to_string(),
 		})
 		.collect();
 
 	// Observation
 	let obs = &mut state.observation;
-	let res_obs = response_observation.get_observation();
+	let res_obs = &response_observation.observation;
 
-	obs.game_loop.set_locked(res_obs.get_game_loop());
+	obs.game_loop.set_locked(res_obs.game_loop());
 	obs.alerts = res_obs
-		.get_alerts()
+		.alerts
 		.iter()
-		.map(|a| Alert::from_proto(*a))
+		.map(|a| Alert::from_proto(a.enum_value_or_default()))
 		.collect();
 	obs.abilities = res_obs
-		.get_abilities()
+		.abilities
 		.iter()
 		.map(|a| AvailableAbility {
 			id: {
-				let id = a.get_ability_id();
+				let id = a.ability_id();
 				AbilityId::from_i32(id).unwrap_or_else(|| panic!("There's no `AbilityId` with value {}", id))
 			},
-			requires_point: a.get_requires_point(),
+			requires_point: a.requires_point(),
 		})
 		.collect();
-	obs.score = Score::from_proto(res_obs.get_score());
+	obs.score = Score::from_proto(&res_obs.score);
 
 	// Common
-	let common = res_obs.get_player_common();
+	let common = &res_obs.player_common;
 	obs.common = Common {
-		player_id: common.get_player_id(),
-		minerals: common.get_minerals(),
-		vespene: common.get_vespene(),
-		food_cap: common.get_food_cap(),
-		food_used: common.get_food_used(),
-		food_army: common.get_food_army(),
-		food_workers: common.get_food_workers(),
-		idle_worker_count: common.get_idle_worker_count(),
-		army_count: common.get_army_count(),
-		warp_gate_count: common.get_warp_gate_count(),
-		larva_count: common.get_larva_count(),
+		player_id: common.player_id(),
+		minerals: common.minerals(),
+		vespene: common.vespene(),
+		food_cap: common.food_cap(),
+		food_used: common.food_used(),
+		food_army: common.food_army(),
+		food_workers: common.food_workers(),
+		idle_worker_count: common.idle_worker_count(),
+		army_count: common.army_count(),
+		warp_gate_count: common.warp_gate_count(),
+		larva_count: common.larva_count(),
 	};
 
 	// Raw
 	let raw = &mut obs.raw;
-	let res_raw = res_obs.get_raw_data();
+	let res_raw = &res_obs.raw_data;
 
-	let raw_player = res_raw.get_player();
+	let raw_player = &res_raw.player;
 	raw.psionic_matrix = raw_player
-		.get_power_sources()
+		.power_sources
 		.iter()
 		.map(PsionicMatrix::from_proto)
 		.collect();
-	raw.camera = Point2::from_proto(raw_player.get_camera());
+	raw.camera = Point2::from_proto(raw_player.camera.get_or_default());
 	raw.effects = res_raw
-		.get_effects()
+		.effects
 		.iter()
 		.map(|e| Effect {
 			id: {
-				let id = e.get_effect_id();
+				let id = e.effect_id();
 				EffectId::from_u32(id).unwrap_or_else(|| panic!("There's no `EffectId` with value {}", id))
 			},
-			positions: e.get_pos().iter().map(Point2::from_proto).collect(),
-			alliance: Alliance::from_proto(e.get_alliance()),
-			owner: e.get_owner() as u32,
-			radius: e.get_radius(),
+			positions: e.pos.iter().map(Point2::from_proto).collect(),
+			alliance: Alliance::from_proto(e.alliance()),
+			owner: e.owner() as u32,
+			radius: e.radius(),
 		})
 		.collect();
 	raw.radars = res_raw
-		.get_radar()
+		.radar
 		.iter()
 		.map(|r| Radar {
-			pos: Point2::from_proto(r.get_pos()),
-			radius: r.get_radius(),
+			pos: Point2::from_proto(r.pos.get_or_default()),
+			radius: r.radius(),
 		})
 		.collect();
 
 	let mut events = vec![];
 	// Dead units
-	let dead_units = res_raw.get_event().get_dead_units().to_vec();
+	let dead_units = &res_raw.event.dead_units;
 
 	#[cfg(feature = "enemies_cache")]
 	let enemy_is_terran = bot.enemy_race.is_terran();
 
-	for u in &dead_units {
+	for u in dead_units {
 		let alliance = if bot.owned_tags.remove(u) {
 			bot.available_frames.write_lock().remove(u);
 			bot.under_construction.remove(u);
@@ -181,52 +181,52 @@ where
 	}
 
 	let raw = &mut bot.state.observation.raw;
-	raw.dead_units = dead_units;
+	raw.dead_units = dead_units.clone();
 
 	// Upgrades
 	*raw.upgrades.write_lock() = raw_player
-		.get_upgrade_ids()
+		.upgrade_ids
 		.iter()
 		.map(|u| UpgradeId::from_u32(*u).unwrap_or_else(|| panic!("There's no `UpgradeId` with value {}", u)))
 		.collect::<FxHashSet<_>>();
 
 	// Map
-	let map_state = res_raw.get_map_state();
+	let map_state = &res_raw.map_state;
 	// Creep
-	*raw.creep.write_lock() = PixelMap::from_proto(map_state.get_creep());
+	*raw.creep.write_lock() = PixelMap::from_proto(&map_state.creep.get_or_default());
 
 	// Available abilities
 	let mut req = Request::new();
-	let req_query_abilities = req.mut_query().mut_abilities();
-	for u in res_raw.get_units() {
-		if matches!(u.get_alliance(), ProtoAlliance::value_Self) {
+	let req_query_abilities = &mut req.mut_query().abilities;
+	for u in &res_raw.units {
+		if matches!(u.alliance(), ProtoAlliance::Self_) {
 			let mut req_unit = RequestQueryAvailableAbilities::new();
-			req_unit.set_unit_tag(u.get_tag());
+			req_unit.unit_tag = u.tag;
 			req_query_abilities.push(req_unit);
 		}
 	}
 
 	let res = bot.api().send(req)?;
 	*bot.abilities_units.write_lock() = res
-		.get_query()
-		.get_abilities()
+		.query()
+		.abilities
 		.iter()
 		.map(|a| {
 			(
-				a.get_unit_tag(),
-				a.get_abilities()
+				a.unit_tag(),
+				a.abilities
 					.iter()
-					.filter_map(|ab| AbilityId::from_i32(ab.get_ability_id()))
+					.filter_map(|ab| AbilityId::from_i32(ab.ability_id()))
 					.collect(),
 			)
 		})
 		.collect();
 
 	// Get visiblity
-	let visibility = VisibilityMap::from_proto(map_state.get_visibility());
+	let visibility = VisibilityMap::from_proto(map_state.visibility.get_or_default());
 	// Get units
 	let units = res_raw
-		.get_units()
+		.units
 		.iter()
 		.map(|u| Unit::from_proto(Rs::clone(&bot.data_for_unit), &visibility, u))
 		.collect::<Units>();
@@ -354,9 +354,9 @@ pub struct PsionicMatrix {
 impl FromProto<&ProtoPowerSource> for PsionicMatrix {
 	fn from_proto(ps: &ProtoPowerSource) -> Self {
 		Self {
-			pos: Point2::from_proto(ps.get_pos()),
-			radius: ps.get_radius(),
-			tag: ps.get_tag(),
+			pos: Point2::from_proto(ps.pos.get_or_default()),
+			radius: ps.radius(),
+			tag: ps.tag(),
 		}
 	}
 }
@@ -408,7 +408,7 @@ impl Alliance {
 impl FromProto<ProtoAlliance> for Alliance {
 	fn from_proto(alliance: ProtoAlliance) -> Self {
 		match alliance {
-			ProtoAlliance::value_Self => Alliance::Own,
+			ProtoAlliance::Self_ => Alliance::Own,
 			ProtoAlliance::Ally => Alliance::Ally,
 			ProtoAlliance::Neutral => Alliance::Neutral,
 			ProtoAlliance::Enemy => Alliance::Enemy,
