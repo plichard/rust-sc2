@@ -119,7 +119,18 @@ where
 		let port = get_unused_port();
 		debug!("Launching SC2 process");
 		self.bot.process = Some(launch_client(&self.sc2_path, port, self.sc2_version));
+		self.bot.external_client = false;
 		debug!("Connecting to websocket");
+		self.bot.api = Some(API::new(connect_to_websocket(HOST, port)?));
+		Ok(())
+	}
+
+	/// Connects bot to the API of an already running SC2 client listening on given port.
+	///
+	/// The client is treated as external: it's left running when the bot closes.
+	pub fn connect(&mut self, port: i32) -> SC2Result<()> {
+		self.bot.external_client = true;
+		debug!("Connecting to websocket of external SC2 client");
 		self.bot.api = Some(API::new(connect_to_websocket(HOST, port)?));
 		Ok(())
 	}
@@ -389,6 +400,9 @@ pub struct LaunchOptions<'a> {
 	pub save_replay_as: Option<&'a str>,
 	/// Play games in real time mode or not.
 	pub realtime: bool,
+	/// Port of an already running SC2 client to use, instead of launching a new one.
+	/// That client is left running after the game. Only used by [`run_vs_computer`].
+	pub port: Option<i32>,
 }
 
 // Runners
@@ -404,7 +418,10 @@ where
 	B: Player + DerefMut<Target = Bot> + Deref<Target = Bot>,
 {
 	let mut runner = RunnerSingle::new(bot, computer, map_name, options.sc2_version);
-	runner.launch()?;
+	match options.port {
+		Some(port) => runner.connect(port)?,
+		None => runner.launch()?,
+	}
 	runner.realtime = options.realtime;
 	runner.save_replay_as = options.save_replay_as;
 	runner.run_game()?;

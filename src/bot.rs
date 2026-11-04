@@ -388,6 +388,8 @@ impl Default for Completion {
 /// [b]: macro@crate::bot
 pub struct Bot {
 	pub(crate) process: Option<Child>,
+	/// Client wasn't launched by the bot, so it shouldn't be quit by it either.
+	pub(crate) external_client: bool,
 	pub(crate) api: Option<API>,
 	pub(crate) game_step: Rs<LockU32>,
 	pub(crate) game_left: bool,
@@ -1760,10 +1762,12 @@ impl Bot {
 				error!("Request LeaveGame failed: {}", e);
 			}
 
-			let mut req = Request::new();
-			req.mut_quit();
-			if let Err(e) = api.send_request(req) {
-				error!("Request QuitGame failed: {}", e);
+			if !self.external_client {
+				let mut req = Request::new();
+				req.mut_quit();
+				if let Err(e) = api.send_request(req) {
+					error!("Request QuitGame failed: {}", e);
+				}
 			}
 		}
 
@@ -1784,6 +1788,7 @@ impl Default for Bot {
 			race: Race::Random,
 			enemy_race: Race::Random,
 			process: None,
+			external_client: false,
 			api: Default::default(),
 			player_id: Default::default(),
 			enemy_player_id: Default::default(),

@@ -98,6 +98,7 @@ pub(crate) fn main(mut bot: impl Player + DerefMut<Target = Bot> + Deref<Target 
 				sc2_version: sc2_version.as_deref(),
 				realtime,
 				save_replay_as: save_replay.as_deref(),
+				port: None,
 			},
 		),
 		Some(Command::Human {
@@ -118,6 +119,7 @@ pub(crate) fn main(mut bot: impl Player + DerefMut<Target = Bot> + Deref<Target 
 				sc2_version: sc2_version.as_deref(),
 				realtime: true,
 				save_replay_as: save_replay.as_deref(),
+				port: None,
 			},
 		),
 		None => run_ladder_game(
