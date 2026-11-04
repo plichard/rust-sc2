@@ -1,7 +1,8 @@
 //! Data structures for storing data of ramps on the map
 //! with methods for extracting useful info from them.
 
-use crate::{bot::Rs, distance::*, geometry::Point2, pixel_map::ByteMap};
+use crate::{distance::*, geometry::Point2, pixel_map::ByteMap};
+use std::sync::Arc;
 use std::{
 	cmp::{Ordering, Reverse},
 	convert::TryInto,
@@ -27,14 +28,14 @@ type Pos = (usize, usize);
 pub struct Ramp {
 	/// All points which belong to this ramp.
 	pub points: Vec<Pos>,
-	height: Rs<ByteMap>,
+	height: Arc<ByteMap>,
 	start_location: Point2,
 }
 impl Ramp {
-	pub(crate) fn new(points: Vec<Pos>, height: &Rs<ByteMap>, start_location: Point2) -> Self {
+	pub(crate) fn new(points: Vec<Pos>, height: &Arc<ByteMap>, start_location: Point2) -> Self {
 		Self {
 			points,
-			height: Rs::clone(height),
+			height: Arc::clone(height),
 			start_location,
 		}
 	}

@@ -1,7 +1,6 @@
 //! Constant information about map, populated on first step.
 
 use crate::{
-	bot::Rs,
 	geometry::{Point2, Rect, Size},
 	pixel_map::{ByteMap, PixelMap},
 	player::{AIBuild, Difficulty, PlayerType, Race},
@@ -29,7 +28,7 @@ pub struct GameInfo {
 	/// Grid with information about pathable tiles on that map.
 	pub pathing_grid: PixelMap,
 	/// Grid with information about terrain height on that map.
-	pub terrain_height: Rs<ByteMap>,
+	pub terrain_height: std::sync::Arc<ByteMap>,
 	/// Grid with information about buildable tiles on that map.
 	pub placement_grid: PixelMap,
 	/// Usually maps have some unplayable area around it, where units can't exist.
@@ -92,7 +91,7 @@ impl FromProto<ResponseGameInfo> for GameInfo {
 				.collect(),
 			map_size: Size::new(map_size.x() as usize, map_size.y() as usize),
 			pathing_grid: PixelMap::from_proto(&start_raw.pathing_grid),
-			terrain_height: Rs::new(ByteMap::from_proto(&start_raw.terrain_height)),
+			terrain_height: std::sync::Arc::new(ByteMap::from_proto(&start_raw.terrain_height)),
 			placement_grid: PixelMap::from_proto(&start_raw.placement_grid),
 			playable_area: Rect::new(
 				area_p0_x as usize,

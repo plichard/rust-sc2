@@ -29,7 +29,7 @@ pub type SC2Result<T> = Result<T, Box<dyn Error>>;
 #[cfg(all(feature = "wine_sc2", not(target_os = "linux")))]
 compile_error!("Wine is only supported on linux");
 
-const HOST: &str = "127.0.0.1";
+pub(crate) const HOST: &str = "127.0.0.1";
 const SC2_BINARY: &str = {
 	#[cfg(any(target_os = "windows", feature = "wine_sc2"))]
 	{
@@ -385,7 +385,7 @@ impl fmt::Display for ProtoError {
 }
 impl Error for ProtoError {}
 
-struct Ports {
+pub(crate) struct Ports {
 	// shared: i32,
 	server: (i32, i32),
 	client: Vec<(i32, i32)>,
@@ -494,7 +494,7 @@ where
 }
 
 // Portpicker
-fn get_unused_port() -> i32 {
+pub(crate) fn get_unused_port() -> i32 {
 	(5000..65535)
 		.find(|port| TcpListener::bind((HOST, *port)).is_ok())
 		.unwrap() as i32
@@ -514,7 +514,7 @@ fn get_unused_ports(n: usize) -> Vec<i32> {
 }
 
 // Helpers
-fn set_static_data(bot: &mut Bot) -> SC2Result<()> {
+pub(crate) fn set_static_data(bot: &mut Bot) -> SC2Result<()> {
 	let api = bot.api();
 
 	debug!("Requesting GameInfo");
@@ -540,7 +540,7 @@ fn set_static_data(bot: &mut Bot) -> SC2Result<()> {
 	Ok(())
 }
 
-fn create_player_setup(settings: &PlayerSettings, req_create_game: &mut RequestCreateGame) {
+pub(crate) fn create_player_setup(settings: &PlayerSettings, req_create_game: &mut RequestCreateGame) {
 	let mut setup = PlayerSetup::new();
 
 	setup.set_race(settings.race.into_proto());
@@ -551,7 +551,7 @@ fn create_player_setup(settings: &PlayerSettings, req_create_game: &mut RequestC
 	req_create_game.player_setup.push(setup);
 }
 
-fn create_computer_setup(computer: &Computer, req_create_game: &mut RequestCreateGame) {
+pub(crate) fn create_computer_setup(computer: &Computer, req_create_game: &mut RequestCreateGame) {
 	let mut setup = PlayerSetup::new();
 
 	setup.set_race(computer.race.into_proto());
@@ -563,7 +563,7 @@ fn create_computer_setup(computer: &Computer, req_create_game: &mut RequestCreat
 	req_create_game.player_setup.push(setup);
 }
 
-fn join_game(settings: &PlayerSettings, api: &API, ports: Option<&Ports>) -> SC2Result<u32> {
+pub(crate) fn join_game(settings: &PlayerSettings, api: &API, ports: Option<&Ports>) -> SC2Result<u32> {
 	join_game2(settings, api, ports)?;
 	wait_join(api)
 }
@@ -723,7 +723,7 @@ where
 	Ok(true)
 }
 
-fn save_replay(api: &API, path: &str) -> SC2Result<()> {
+pub(crate) fn save_replay(api: &API, path: &str) -> SC2Result<()> {
 	let mut req = Request::new();
 	req.mut_save_replay();
 
@@ -738,7 +738,7 @@ fn save_replay(api: &API, path: &str) -> SC2Result<()> {
 	Ok(())
 }
 
-fn launch_client(sc2_path: &str, port: i32, sc2_version: Option<&str>) -> Child {
+pub(crate) fn launch_client(sc2_path: &str, port: i32, sc2_version: Option<&str>) -> Child {
 	let (base_version, data_hash) = match sc2_version {
 		Some(ver) => get_version_info(ver),
 		None => (get_latest_base_version(sc2_path), ""),
@@ -785,7 +785,7 @@ fn launch_client(sc2_path: &str, port: i32, sc2_version: Option<&str>) -> Child 
 	process.spawn().expect("Can't launch SC2 process.")
 }
 
-fn connect_to_websocket(host: &str, port: i32) -> SC2Result<WS> {
+pub(crate) fn connect_to_websocket(host: &str, port: i32) -> SC2Result<WS> {
 	let url = format!("ws://{}:{}/sc2api", host, port);
 	let (ws, _rs) = loop {
 		if let Ok(result) = connect(&url) {
