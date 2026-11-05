@@ -251,49 +251,6 @@ impl<'w> Units<'w> {
 	}
 }
 
-#[cfg(feature = "rayon")]
-impl<'w> Units<'w> {
-	/// Iterates over the units in parallel.
-	pub fn par_iter(&self) -> impl rayon::iter::ParallelIterator<Item = UnitRef<'w>> + '_ {
-		use rayon::prelude::*;
-		let world = self.world;
-		self.ids.par_iter().map(move |&id| world.unit_at(id))
-	}
-	/// Iterates over the tags of the units in parallel.
-	pub fn par_tags(&self) -> impl rayon::iter::ParallelIterator<Item = UnitTag> + '_ {
-		use rayon::prelude::*;
-		self.par_iter().map(|u| u.tag)
-	}
-	/// As [`sorted`](Self::sorted), computing the keys and sorting in parallel.
-	pub fn par_sorted<T, F>(&self, f: F) -> Units<'w>
-	where
-		T: PartialOrd + Send,
-		F: Fn(UnitRef<'w>) -> T + Sync + Send,
-	{
-		use rayon::prelude::*;
-		let world = self.world;
-		let mut keyed = self
-			.ids
-			.par_iter()
-			.map(|&id| (f(world.unit_at(id)), id))
-			.collect::<Vec<_>>();
-		keyed.par_sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
-		Units::unordered(world, Cow::Owned(keyed.into_iter().map(|(_, id)| id).collect()))
-	}
-	/// As [`filter`](Self::filter), running the predicate in parallel. Keeps the order of the group.
-	pub fn par_filter(&self, f: impl Fn(UnitRef<'w>) -> bool + Sync + Send) -> Units<'w> {
-		use rayon::prelude::*;
-		let world = self.world;
-		self.with_ids(
-			self.ids
-				.par_iter()
-				.copied()
-				.filter(|&id| f(world.unit_at(id)))
-				.collect(),
-		)
-	}
-}
-
 /// Iterator over a borrowed group.
 pub struct Iter<'a, 'w> {
 	world: &'w World,

@@ -142,7 +142,6 @@ cargo run --example reaper-rush -- local --map <map> --port <port>
 ```
 
 ## Optional features
-- `"rayon"` - adds parallel iteration over units (`par_iter`, `par_filter`, ...)
 - `"serde"` - adds implementation of `Serialize`, `Deserialize` to ids, Race, GameResult, ...
 - `"wine_sc2"` - allows you to run headful SC2 through Lutris and Wine
 
@@ -199,6 +198,12 @@ impl Player for MyBot {
 - `ctx.debug`: debug drawing and cheats
 
 These are independent, so you can give orders and change your bot's fields while looping over units.
+
+`World` and `UnitRef` are `Send + Sync`, so if a bot has expensive per-unit work it can run that in parallel with any library. For example, with `rayon`:
+```rust
+let workers: Vec<_> = ctx.world.my().workers().iter().collect();
+let scores: Vec<_> = workers.par_iter().map(|u| score(*u)).collect();
+```
 
 To remember a unit between steps, keep its `UnitTag` and look it up with `ctx.world.unit(tag)`, which returns `None` once the unit is gone from the observation. A `UnitRef` can't be kept past the step it belongs to. The one exception is resources: SC2 changes the tags of mineral fields and geysers as they go in and out of vision, so `Expansion` stores their positions, and `ctx.world.minerals_of(expansion)` finds them on the current step.
 

@@ -89,8 +89,6 @@ extern crate log;
 
 /// Everything a bot usually needs: `use rust_sc2::prelude::*;`.
 pub mod prelude {
-	#[cfg(feature = "rayon")]
-	pub use crate::distance::rayon::{ParCenter, ParDistanceIterator, ParDistanceSlice};
 	pub use crate::{
 		action::Target,
 		client::{

@@ -4,9 +4,6 @@
 use crate::geometry::Point2;
 use std::{cmp::Ordering, vec::IntoIter};
 
-#[cfg(feature = "rayon")]
-pub mod rayon;
-
 /// Basic trait for comparing distance.
 pub trait Distance: Into<Point2> {
 	/// Calculates squared euclidean distance from `self` to `other`.

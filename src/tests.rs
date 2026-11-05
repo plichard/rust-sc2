@@ -124,7 +124,7 @@ fn step(prev: &World, units: Vec<ProtoUnit>, dead: &[u64]) -> (World, Vec<Event>
 }
 
 #[test]
-fn world_is_thread_safe_without_the_rayon_feature() {
+fn world_is_thread_safe() {
 	fn assert_send_sync<T: Send + Sync>() {}
 	assert_send_sync::<World>();
 	assert_send_sync::<UnitRef<'_>>();
@@ -634,32 +634,6 @@ fn unknown_ids_do_not_end_the_game() {
 	assert!(!worker.is_idle());
 	assert_eq!(worker.ordered_ability(), Some(AbilityId::NullNull));
 	assert_eq!(world.my().workers().idle().len(), 0);
-}
-
-#[cfg(feature = "rayon")]
-#[test]
-fn parallel_helpers_match_the_sequential_ones() {
-	use rayon::iter::ParallelIterator;
-	let (world, _) = step(
-		&empty_world(),
-		vec![
-			unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (9.0, 9.0)),
-			unit(2, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0)),
-			unit(3, UnitTypeId::Probe, ProtoAlliance::Self_, (5.0, 5.0)),
-		],
-		&[],
-	);
-	let workers = world.my().workers();
-	assert_eq!(
-		workers.par_sorted(|u| u.position.x).tags().collect::<Vec<_>>(),
-		[t(2), t(3), t(1)]
-	);
-	assert_eq!(
-		workers.par_filter(|u| u.tag != t(2)).tags().collect::<Vec<_>>(),
-		[t(1), t(3)]
-	);
-	assert_eq!(workers.par_tags().map(|tag| tag.get()).sum::<u64>(), 6);
-	assert_eq!(workers.par_iter().count(), 3);
 }
 
 /// SC2 changes a resource's tag as it goes in and out of vision, but never its position.
