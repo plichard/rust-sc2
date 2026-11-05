@@ -1,4 +1,9 @@
-use super::{build::build_world, map::analyze, Budget, Commands, Context, Player, UnitData, World};
+use super::{
+	build::build_world,
+	id_check::{check_ids, report},
+	map::analyze,
+	Budget, Commands, Context, Event, Player, UnitData, UnitTag, World,
+};
 use crate::{
 	api::API,
 	client::{
@@ -334,7 +339,7 @@ fn check_game_created(api: &API, req: Request) -> SC2Result<()> {
 fn query_abilities(
 	api: &API,
 	observation: &ResponseObservation,
-) -> SC2Result<FxHashMap<u64, FxHashSet<AbilityId>>> {
+) -> SC2Result<FxHashMap<UnitTag, FxHashSet<AbilityId>>> {
 	let mut req = Request::new();
 	let query = &mut req.mut_query().abilities;
 	for u in &observation.observation.raw_data.units {
@@ -351,7 +356,7 @@ fn query_abilities(
 		.iter()
 		.map(|a| {
 			(
-				a.unit_tag(),
+				UnitTag(a.unit_tag()),
 				a.abilities
 					.iter()
 					.filter_map(|ab| AbilityId::from_i32(ab.ability_id()))
@@ -370,31 +375,51 @@ struct Game<'a> {
 	game_step: u32,
 }
 
+/// What a bot's turns share. Bots get a [`Context`] with shared access to the world.
+struct Turn {
+	world: World,
+	cmds: Commands,
+	budget: Budget,
+	debug: Debugger,
+	api: API,
+}
+
+impl Turn {
+	fn context(&mut self) -> Context<'_> {
+		Context {
+			world: &self.world,
+			cmds: &mut self.cmds,
+			budget: &mut self.budget,
+			debug: &mut self.debug,
+			api: &self.api,
+		}
+	}
+}
+
 impl Game<'_> {
 	fn run<P: Player>(self, player: &mut P, client: &mut Client) -> SC2Result<()> {
 		let api = client.api.take().ok_or("SC2 client isn't connected")?;
-		let mut events = vec![];
-		let started = self.start(&api, &mut events);
-		let mut ctx = match started {
-			Ok(world) => Context {
-				budget: Budget::new(&world),
-				world,
-				cmds: Commands::default(),
-				debug: Debugger::default(),
-				api,
-			},
+		let (world, events) = match self.start(&api) {
+			Ok(started) => started,
 			Err(e) => {
 				client.api = Some(api);
 				return Err(e);
 			}
 		};
-		let result = self.play(player, &mut ctx, events);
-		client.api = Some(ctx.api);
+		let mut turn = Turn {
+			budget: Budget::new(&world),
+			world,
+			cmds: Commands::default(),
+			debug: Debugger::default(),
+			api,
+		};
+		let result = self.play(player, &mut turn, events);
+		client.api = Some(turn.api);
 		result
 	}
 
-	/// Reads the static data and the first observation, which sees through the fog of war.
-	fn start(&self, api: &API, events: &mut Vec<crate::Event>) -> SC2Result<World> {
+	/// Reads the static data and builds the first world.
+	fn start(&self, api: &API) -> SC2Result<(World, Vec<Event>)> {
 		let mut req = Request::new();
 		req.mut_game_info();
 		let game_info: GameInfo = api.send(req)?.take_game_info().into_sc2();
@@ -406,13 +431,17 @@ impl Game<'_> {
 		data.set_upgrade_id(true);
 		data.set_buff_id(true);
 		data.set_effect_id(true);
-		let game_data: GameData = api.send(req)?.take_data().into_sc2();
+		let mut res = api.send(req)?;
+		let id_mismatches = check_ids(res.data());
+		report(&id_mismatches);
+		let game_data: GameData = res.take_data().into_sc2();
 
+		// Finding expansions needs every resource on the map, so this one observation
+		// sees through the fog of war. It's only used for that, not to play with.
 		let mut req = Request::new();
 		req.mut_observation().set_disable_fog(true);
-		let observation = api.send(req)?.take_observation();
-
-		let raw = &observation.observation.raw_data;
+		let map_observation = api.send(req)?.take_observation();
+		let raw = &map_observation.observation.raw_data;
 		let visibility = VisibilityMap::from_proto(raw.map_state.visibility.get_or_default());
 		let units = raw
 			.units
@@ -425,29 +454,31 @@ impl Game<'_> {
 			self.opponent_id.clone(),
 			game_info,
 			game_data,
+			id_mismatches,
 			&units,
 		)?;
 
+		let mut req = Request::new();
+		req.mut_observation().set_disable_fog(false);
+		let observation = api.send(req)?.take_observation();
 		let abilities = query_abilities(api, &observation)?;
 		let mut initial = World::initial(Arc::new(map), enemy_race, expansions);
 		initial.game_step = self.game_step;
-		let (world, first_events) = build_world(&initial, &observation, abilities);
-		*events = first_events;
-		Ok(world)
+		Ok(build_world(&initial, &observation, abilities))
 	}
 
-	fn play<P: Player>(&self, player: &mut P, ctx: &mut Context, events: Vec<crate::Event>) -> SC2Result<()> {
+	fn play<P: Player>(&self, player: &mut P, turn: &mut Turn, events: Vec<Event>) -> SC2Result<()> {
 		for event in events {
-			player.on_event(ctx, event)?;
+			player.on_event(&mut turn.context(), event)?;
 		}
-		player.on_start(ctx)?;
-		self.end_turn(ctx)?;
+		player.on_start(&mut turn.context())?;
+		self.end_turn(turn)?;
 
 		let mut iteration = 0;
 		loop {
 			let mut req = Request::new();
 			req.mut_observation().set_disable_fog(false);
-			let mut res = ctx.api.send(req)?;
+			let mut res = turn.api.send(req)?;
 
 			if matches!(res.status(), Status::ended) {
 				let result = res.observation().player_result[self.player_id as usize - 1]
@@ -458,68 +489,70 @@ impl Game<'_> {
 			}
 
 			let observation = res.take_observation();
-			let abilities = query_abilities(&ctx.api, &observation)?;
-			let (world, events) = build_world(&ctx.world, &observation, abilities);
-			ctx.budget = Budget::new(&world);
-			ctx.world = world;
+			let abilities = query_abilities(&turn.api, &observation)?;
+			let (world, events) = build_world(&turn.world, &observation, abilities);
+			turn.budget = Budget::new(&world);
+			turn.world = world;
 
 			for event in events {
-				player.on_event(ctx, event)?;
+				player.on_event(&mut turn.context(), event)?;
 			}
-			player.on_step(ctx, iteration)?;
-			if ctx.cmds.leave_game {
+			player.on_step(&mut turn.context(), iteration)?;
+			if turn.cmds.leave_game {
 				let mut req = Request::new();
 				req.mut_leave_game();
-				ctx.api.send_request(req)?;
+				turn.api.send_request(req)?;
 				break;
 			}
-			self.end_turn(ctx)?;
+			self.end_turn(turn)?;
 			iteration += 1;
 		}
 
 		if let Some(path) = self.save_replay_as {
-			save_replay(&ctx.api, path)?;
+			save_replay(&turn.api, path)?;
 		}
 		Ok(())
 	}
 
 	/// Sends everything the bot queued, then asks SC2 to advance the game.
-	fn end_turn(&self, ctx: &mut Context) -> SC2Result<()> {
-		let actions = ctx.cmds.take_actions();
+	fn end_turn(&self, turn: &mut Turn) -> SC2Result<()> {
+		let actions = turn.cmds.take_actions();
 		if !actions.is_empty() {
 			let mut req = Request::new();
 			let proto = &mut req.mut_action().actions;
 			for action in &actions {
 				proto.push(action.into_proto());
 			}
-			ctx.api.send_request(req)?;
+			turn.api.send_request(req)?;
 		}
 
-		let debug_commands = ctx.debug.get_commands();
+		let debug_commands = turn.debug.get_commands();
 		if !debug_commands.is_empty() {
 			let mut req = Request::new();
 			let proto = &mut req.mut_debug().debug;
 			for command in debug_commands.iter() {
 				proto.push(command.into_proto());
 			}
-			ctx.api.send_request(req)?;
+			turn.api.send_request(req)?;
 		}
-		ctx.debug.clear_commands();
+		turn.debug.clear_commands();
 
 		// The world doesn't change during a turn; these apply to the next one.
-		if let Some(frames) = ctx.cmds.game_step.take() {
-			ctx.world.game_step = frames;
+		if let Some(frames) = turn.cmds.game_step.take() {
+			turn.world.game_step = frames;
 		}
-		ctx.world.enemy_upgrades.extend(ctx.cmds.enemy_upgrades.drain(..));
-		let game_loop = ctx.world.game_loop;
-		for (tag, frames) in mem::take(&mut ctx.cmds.sleeping) {
-			ctx.world.available_frames.insert(tag, game_loop + frames);
+		turn.world
+			.enemy_upgrades
+			.extend(turn.cmds.enemy_upgrades.drain(..));
+		let game_loop = turn.world.game_loop;
+		for (tag, frames) in mem::take(&mut turn.cmds.sleeping) {
+			turn.world.available_frames.insert(tag, game_loop + frames);
 		}
 
 		if !self.realtime {
 			let mut req = Request::new();
-			req.mut_step().set_count(ctx.world.game_step);
-			ctx.api.send_request(req)?;
+			req.mut_step().set_count(turn.world.game_step);
+			turn.api.send_request(req)?;
 		}
 		Ok(())
 	}

@@ -1,6 +1,6 @@
 //! Turns an observation and the previous world into the next world.
 
-use super::{unit::known, units::PlayerGroups, world::Groups, UnitData, World};
+use super::{unit::known, units::PlayerGroups, world::Groups, Event, UnitData, UnitTag, World};
 use crate::{
 	action::{Action, ActionError, Target},
 	consts::{BURROWED_IDS, FRAMES_PER_SECOND, INHIBITOR_IDS},
@@ -12,7 +12,7 @@ use crate::{
 	pixel_map::{PixelMap, VisibilityMap},
 	score::Score,
 	unit::DisplayType,
-	Event, FromProto,
+	FromProto,
 };
 use indexmap::IndexMap;
 use num_traits::FromPrimitive;
@@ -143,7 +143,7 @@ fn action_is_known(action: &ProtoAction) -> bool {
 pub(super) fn build_world(
 	prev: &World,
 	response: &ResponseObservation,
-	abilities: FxHashMap<u64, FxHashSet<AbilityId>>,
+	abilities: FxHashMap<UnitTag, FxHashSet<AbilityId>>,
 ) -> (World, Vec<Event>) {
 	let map = Arc::clone(&prev.map);
 	let game_data = &map.game_data;
@@ -164,15 +164,20 @@ pub(super) fn build_world(
 		.all()
 		.iter()
 		.map(|u| (u.tag, u.data().clone()))
-		.collect::<FxIndexMap<u64, UnitData>>();
+		.collect::<FxIndexMap<UnitTag, UnitData>>();
 
 	// Dead units
-	let dead_units = raw.event.dead_units.clone();
+	let dead_units = raw
+		.event
+		.dead_units
+		.iter()
+		.copied()
+		.map(UnitTag)
+		.collect::<Vec<_>>();
 	for tag in &dead_units {
 		let last_seen = prev.unit(*tag).map(|u| u.alliance);
 		let was_hallucination = hallucinations.remove(tag);
 		let was_remembered = memory.shift_remove(tag).is_some();
-		let was_expansion_mineral = expansions.iter_mut().any(|exp| exp.minerals.remove(tag));
 
 		let alliance = if owned_tags.remove(tag) {
 			available_frames.remove(tag);
@@ -180,7 +185,7 @@ pub(super) fn build_world(
 			Some(Alliance::Own)
 		} else if was_hallucination || was_remembered {
 			Some(Alliance::Enemy)
-		} else if was_expansion_mineral {
+		} else if map.resource_tags.contains(tag) {
 			Some(Alliance::Neutral)
 		} else {
 			last_seen
@@ -576,14 +581,14 @@ pub(super) fn build_world(
 /// Works out what to believe about enemies that aren't in this observation.
 /// Returns the tags of units seen on this step whose remembered entry differs from SC2's report.
 fn update_memory(
-	memory: &mut FxIndexMap<u64, UnitData>,
+	memory: &mut FxIndexMap<UnitTag, UnitData>,
 	units: &[UnitData],
 	groups: &Groups,
 	visibility: &VisibilityMap,
 	effects: &[Effect],
 	game_data: &GameData,
 	enemy_is_zerg: bool,
-) -> FxHashSet<u64> {
+) -> FxHashSet<UnitTag> {
 	let is_structure = |u: &UnitData| has_attribute(game_data, u.type_id, Attribute::Structure);
 	let unit = |id: &u32| &units[*id as usize];
 

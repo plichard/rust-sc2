@@ -2,12 +2,11 @@
 
 use super::{
 	build::{is_geyser_type, is_mineral_type},
-	UnitData,
+	IdMismatch, UnitData, UnitTag,
 };
 use crate::{
 	action::Target,
 	api::API,
-	bot::Expansion,
 	consts::{RaceValues, RACE_VALUES},
 	distance::{Center, Distance},
 	game_data::GameData,
@@ -19,12 +18,29 @@ use crate::{
 	utils::{dbscan, range_query},
 	SC2Result,
 };
-use indexmap::IndexSet;
 use itertools::iproduct;
-use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
-use std::hash::BuildHasherDefault;
+use rustc_hash::{FxHashMap, FxHashSet};
 
-type FxIndexSet<T> = IndexSet<T, BuildHasherDefault<FxHasher>>;
+/// A place to build a townhall, and the resources around it.
+///
+/// Resources are stored by position, because SC2 changes their tags as they go in and
+/// out of vision. Use [`World::minerals_of`](super::World::minerals_of) and
+/// [`World::geysers_of`](super::World::geysers_of) to get the units for this step.
+#[derive(Debug, Clone)]
+pub struct Expansion {
+	/// Placement position for the townhall.
+	pub loc: Point2,
+	/// Center of the resources.
+	pub center: Point2,
+	/// Positions of the mineral fields, closest to the townhall first.
+	pub minerals: Vec<Point2>,
+	/// Positions of the vespene geysers.
+	pub geysers: Vec<Point2>,
+	/// `Neutral` if the expansion is free, otherwise `Own` or `Enemy`.
+	pub alliance: Alliance,
+	/// Tag of the townhall on the expansion, if SC2 reports one.
+	pub base: Option<UnitTag>,
+}
 
 /// Data that doesn't change during a game. Shared by every [`World`](super::World).
 pub struct MapData {
@@ -54,6 +70,11 @@ pub struct MapData {
 	pub ramps: Ramps,
 	/// Obstacles that block vision of ground units, but are pathable.
 	pub vision_blockers: Vec<Point2>,
+	/// IDs where the library's tables disagree with this client. Should be empty.
+	/// If it isn't, run `generate_ids.py` with this client's `stableid.json`.
+	pub id_mismatches: Vec<IdMismatch>,
+	// Tags of resources as they were when visible, used to label their deaths.
+	pub(super) resource_tags: FxHashSet<UnitTag>,
 }
 
 fn is_placeable(game_info: &GameInfo, pos: (usize, usize)) -> bool {
@@ -84,6 +105,7 @@ pub(super) fn analyze(
 	opponent_id: String,
 	game_info: GameInfo,
 	game_data: GameData,
+	id_mismatches: Vec<IdMismatch>,
 	units: &[UnitData],
 ) -> SC2Result<(MapData, Race, Vec<Expansion>)> {
 	let players = &game_info.players;
@@ -121,7 +143,7 @@ pub(super) fn analyze(
 	let positions = all_resources
 		.iter()
 		.map(|r| (r.position, r.tag))
-		.collect::<Vec<(Point2, u64)>>();
+		.collect::<Vec<(Point2, UnitTag)>>();
 
 	let groups = dbscan(
 		&positions,
@@ -188,19 +210,21 @@ pub(super) fn analyze(
 				)
 			};
 
-			let mut minerals = FxIndexSet::default();
-			let mut geysers = FxHashSet::default();
-			for r in &resources {
-				if is_geyser(r) {
-					geysers.insert(r.tag);
-				} else {
-					minerals.insert(r.tag);
-				}
-			}
+			let mut minerals = resources
+				.iter()
+				.filter(|r| !is_geyser(r))
+				.map(|r| r.position)
+				.collect::<Vec<_>>();
 			minerals.sort_by(|a, b| {
-				let dist = |t: &u64| by_tag[t].position.distance_squared(loc);
-				dist(a).partial_cmp(&dist(b)).unwrap()
+				a.distance_squared(loc)
+					.partial_cmp(&b.distance_squared(loc))
+					.unwrap()
 			});
+			let geysers = resources
+				.iter()
+				.filter(|r| is_geyser(r))
+				.map(|r| r.position)
+				.collect();
 
 			Ok(Expansion {
 				loc,
@@ -311,6 +335,8 @@ pub(super) fn analyze(
 		enemy_start_center,
 		ramps,
 		vision_blockers,
+		id_mismatches,
+		resource_tags: resources.iter().map(|r| r.tag).collect(),
 	};
 	Ok((map, enemy_race, expansions))
 }

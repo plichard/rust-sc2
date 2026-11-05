@@ -1,10 +1,10 @@
 //! Questions SC2 itself has to answer, such as whether a building fits somewhere.
 
-use super::{UnitRef, World};
+use super::{Expansion, UnitRef, UnitTag, World};
 use crate::{
 	action::{ActionResult, Target},
 	api::API,
-	bot::{Expansion, PlacementOptions},
+	bot::PlacementOptions,
 	distance::Distance,
 	geometry::Point2,
 	ids::{AbilityId, UnitTypeId},
@@ -41,7 +41,7 @@ impl API {
 	/// Takes creep, psionic matrix and obstacles into account.
 	pub fn query_placement(
 		&self,
-		places: Vec<(AbilityId, Point2, Option<u64>)>,
+		places: Vec<(AbilityId, Point2, Option<UnitTag>)>,
 		check_resources: bool,
 	) -> SC2Result<Vec<ActionResult>> {
 		let mut req = Request::new();
@@ -53,7 +53,7 @@ impl API {
 			placement.set_ability_id(ability.to_i32().unwrap());
 			*placement.target_pos.mut_or_insert_default() = pos.into_proto();
 			if let Some(tag) = builder {
-				placement.set_placing_unit_tag(tag);
+				placement.set_placing_unit_tag(tag.get());
 			}
 			req_placement.push(placement);
 		}

@@ -1,8 +1,9 @@
-use super::{units::PlayerGroups, MapData, PlayerUnits, UnitData, UnitRef, Units};
+use super::{units::PlayerGroups, Expansion, MapData, PlayerUnits, UnitData, UnitRef, UnitTag, Units};
 use crate::{
 	action::{Action, ActionError},
-	bot::{Completion, Expansion, UnitAlias},
+	bot::{Completion, UnitAlias},
 	consts::{TECH_ALIAS, UNIT_ALIAS},
+	distance::Distance,
 	game_data::Cost,
 	game_state::{Alert, AvailableAbility, ChatMessage, Common, Effect, PsionicMatrix, Radar},
 	geometry::Point2,
@@ -88,7 +89,7 @@ pub struct World {
 	/// Errors of actions from the previous step.
 	pub action_errors: Vec<ActionError>,
 	/// Tags of units which died since the previous step.
-	pub dead_units: Vec<u64>,
+	pub dead_units: Vec<UnitTag>,
 	/// All expansions, closest to your start location first.
 	pub expansions: Vec<Expansion>,
 	/// Orders of your units, counted by ability.
@@ -107,18 +108,18 @@ pub struct World {
 	// This step's units come first, followed by what only enemy memory holds.
 	pub(super) units: Vec<UnitData>,
 	pub(super) current_units_count: usize,
-	pub(super) index: FxHashMap<u64, u32>,
+	pub(super) index: FxHashMap<UnitTag, u32>,
 	pub(super) groups: Groups,
-	pub(super) abilities: FxHashMap<u64, FxHashSet<AbilityId>>,
-	pub(super) techlab_tags: FxHashSet<u64>,
-	pub(super) reactor_tags: FxHashSet<u64>,
-	pub(super) last_health: FxHashMap<u64, u32>,
+	pub(super) abilities: FxHashMap<UnitTag, FxHashSet<AbilityId>>,
+	pub(super) techlab_tags: FxHashSet<UnitTag>,
+	pub(super) reactor_tags: FxHashSet<UnitTag>,
+	pub(super) last_health: FxHashMap<UnitTag, u32>,
 	pub(super) max_cooldowns: FxHashMap<UnitTypeId, f32>,
-	pub(super) available_frames: FxHashMap<u64, u32>,
+	pub(super) available_frames: FxHashMap<UnitTag, u32>,
 	// Remembered from step to step
-	pub(super) hallucinations: FxHashSet<u64>,
-	pub(super) owned_tags: FxHashSet<u64>,
-	pub(super) under_construction: FxHashSet<u64>,
+	pub(super) hallucinations: FxHashSet<UnitTag>,
+	pub(super) owned_tags: FxHashSet<UnitTag>,
+	pub(super) under_construction: FxHashSet<UnitTag>,
 }
 
 impl World {
@@ -181,11 +182,11 @@ impl World {
 		UnitRef::new(&self.units[id as usize], self, id)
 	}
 	#[inline]
-	pub(super) fn index_of(&self, tag: u64) -> Option<u32> {
+	pub(super) fn index_of(&self, tag: UnitTag) -> Option<u32> {
 		self.index.get(&tag).copied()
 	}
 	/// Finds any unit by tag. `None` means it's not in this step's observation.
-	pub fn unit(&self, tag: u64) -> Option<UnitRef<'_>> {
+	pub fn unit(&self, tag: UnitTag) -> Option<UnitRef<'_>> {
 		self.index_of(tag).map(|id| self.unit_at(id))
 	}
 	/// A group made of given units, for example the result of your own iterator chain.
@@ -402,6 +403,17 @@ impl World {
 			.filter(|s| s.is_ready())
 			.find_map(|s| s.orders.iter().find(|o| o.ability == ability).map(|o| o.progress))
 			.unwrap_or(0.0)
+	}
+	/// Mineral fields of given expansion on this step, closest to the townhall first.
+	pub fn minerals_of(&self, expansion: &Expansion) -> Units<'_> {
+		self.mineral_fields()
+			.filter(|m| expansion.minerals.contains(&m.position))
+			.sorted(|m| m.position.distance_squared(expansion.loc))
+	}
+	/// Vespene geysers of given expansion on this step.
+	pub fn geysers_of(&self, expansion: &Expansion) -> Units<'_> {
+		self.vespene_geysers()
+			.filter(|g| expansion.geysers.contains(&g.position))
 	}
 	/// Next free expansion closest to your start location.
 	pub fn get_expansion(&self) -> Option<&Expansion> {

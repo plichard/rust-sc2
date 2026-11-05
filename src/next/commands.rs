@@ -1,5 +1,5 @@
-use super::UnitRef;
 use super::World;
+use super::{UnitRef, UnitTag};
 use crate::{
 	action::{Action, Target},
 	consts::WARPGATE_ABILITIES,
@@ -7,6 +7,13 @@ use crate::{
 	ids::{AbilityId, UnitTypeId, UpgradeId},
 };
 use rustc_hash::FxHashMap;
+
+impl From<Point2> for Target {
+	#[inline]
+	fn from(pos: Point2) -> Self {
+		Target::Pos(pos)
+	}
+}
 
 /// Orders collected during your turn and sent to SC2 when it ends.
 ///
@@ -16,7 +23,7 @@ pub struct Commands {
 	commands: Vec<(AbilityId, Target, bool, Vec<u64>)>,
 	autocast: FxHashMap<AbilityId, Vec<u64>>,
 	actions: Vec<Action>,
-	pub(super) sleeping: Vec<(u64, u32)>,
+	pub(super) sleeping: Vec<(UnitTag, u32)>,
 	pub(super) game_step: Option<u32>,
 	pub(super) enemy_upgrades: Vec<UpgradeId>,
 	pub(super) leave_game: bool,
@@ -25,26 +32,29 @@ pub struct Commands {
 impl Commands {
 	/// Orders unit to execute given command.
 	/// Identical orders are merged into one action, as in the old API.
-	pub fn command(&mut self, unit: UnitRef<'_>, ability: AbilityId, target: Target, queue: bool) {
+	///
+	/// `target` can be a [`Target`], a position, a unit or a tag.
+	pub fn command(&mut self, unit: UnitRef<'_>, ability: AbilityId, target: impl Into<Target>, queue: bool) {
+		let target = target.into();
 		for (a, t, q, units) in &mut self.commands {
 			if *a == ability && *t == target && *q == queue {
-				units.push(unit.tag);
+				units.push(unit.tag.get());
 				return;
 			}
 		}
-		self.commands.push((ability, target, queue, vec![unit.tag]));
+		self.commands.push((ability, target, queue, vec![unit.tag.get()]));
 	}
 	/// Orders unit to attack given target.
-	pub fn attack(&mut self, unit: UnitRef<'_>, target: Target, queue: bool) {
+	pub fn attack(&mut self, unit: UnitRef<'_>, target: impl Into<Target>, queue: bool) {
 		self.command(unit, AbilityId::Attack, target, queue)
 	}
 	/// Orders unit to move to given target.
-	pub fn move_to(&mut self, unit: UnitRef<'_>, target: Target, queue: bool) {
+	pub fn move_to(&mut self, unit: UnitRef<'_>, target: impl Into<Target>, queue: bool) {
 		self.command(unit, AbilityId::MoveMove, target, queue)
 	}
 	/// Orders worker to gather given resource.
-	pub fn gather(&mut self, unit: UnitRef<'_>, target: u64, queue: bool) {
-		self.command(unit, AbilityId::HarvestGather, Target::Tag(target), queue)
+	pub fn gather(&mut self, unit: UnitRef<'_>, resource: impl Into<UnitTag>, queue: bool) {
+		self.command(unit, AbilityId::HarvestGather, resource.into(), queue)
 	}
 	/// Orders production building to train given unit.
 	pub fn train(&mut self, unit: UnitRef<'_>, type_id: UnitTypeId, queue: bool) {
@@ -77,7 +87,7 @@ impl Commands {
 		self.command(unit, ability, Target::None, queue)
 	}
 	/// Orders unit a `Smart` ability (the equivalent of a right click).
-	pub fn smart(&mut self, unit: UnitRef<'_>, target: Target, queue: bool) {
+	pub fn smart(&mut self, unit: UnitRef<'_>, target: impl Into<Target>, queue: bool) {
 		self.command(unit, AbilityId::Smart, target, queue)
 	}
 	/// Orders unit to hold position.
@@ -93,12 +103,12 @@ impl Commands {
 		self.use_ability(unit, AbilityId::Stop, queue)
 	}
 	/// Orders unit to patrol.
-	pub fn patrol(&mut self, unit: UnitRef<'_>, target: Target, queue: bool) {
+	pub fn patrol(&mut self, unit: UnitRef<'_>, target: impl Into<Target>, queue: bool) {
 		self.command(unit, AbilityId::Patrol, target, queue)
 	}
 	/// Orders SCV or MULE to repair given structure or mechanical unit.
-	pub fn repair(&mut self, unit: UnitRef<'_>, target: u64, queue: bool) {
-		self.command(unit, AbilityId::EffectRepair, Target::Tag(target), queue)
+	pub fn repair(&mut self, unit: UnitRef<'_>, target: impl Into<UnitTag>, queue: bool) {
+		self.command(unit, AbilityId::EffectRepair, target.into(), queue)
 	}
 	/// Orders building which is in progress to cancel construction.
 	pub fn cancel_building(&mut self, unit: UnitRef<'_>, queue: bool) {
@@ -114,7 +124,7 @@ impl Commands {
 		self.use_ability(unit, ability, queue)
 	}
 	/// Orders worker to build your race's gas building on given geyser.
-	pub fn build_gas(&mut self, unit: UnitRef<'_>, geyser: u64, queue: bool) {
+	pub fn build_gas(&mut self, unit: UnitRef<'_>, geyser: impl Into<UnitTag>, queue: bool) {
 		let map = &unit.world().map;
 		if let Some(ability) = map
 			.game_data
@@ -122,7 +132,7 @@ impl Commands {
 			.get(&map.race_values.gas)
 			.and_then(|d| d.ability)
 		{
-			self.command(unit, ability, Target::Tag(geyser), queue);
+			self.command(unit, ability, geyser.into(), queue);
 		}
 	}
 	/// Orders building to research given upgrade.
@@ -156,7 +166,7 @@ impl Commands {
 	}
 	/// Toggles autocast on given ability.
 	pub fn toggle_autocast(&mut self, unit: UnitRef<'_>, ability: AbilityId) {
-		self.autocast.entry(ability).or_default().push(unit.tag);
+		self.autocast.entry(ability).or_default().push(unit.tag.get());
 	}
 	/// Makes [`is_sleeping`](UnitRef::is_sleeping) return `true` for this unit for given
 	/// number of frames, starting from the next step.

@@ -4,7 +4,7 @@
 //! collecting labels into a `Vec` so that `self.debug` can be borrowed mutably.
 
 use rust_sc2::next::prelude::*;
-use rustc_hash::FxHashSet;
+use std::collections::HashSet;
 
 #[path = "next_args/mod.rs"]
 mod next_args;
@@ -12,10 +12,10 @@ mod next_args;
 /// Stand-in for `bot::base::Base`, which is only a set of tags.
 #[derive(Default)]
 struct Base {
-	idle_workers: FxHashSet<u64>,
+	idle_workers: HashSet<UnitTag>,
 }
 impl Base {
-	fn add_unit(&mut self, tag: u64) {
+	fn add_unit(&mut self, tag: UnitTag) {
 		self.idle_workers.insert(tag);
 	}
 }

@@ -18,6 +18,44 @@ use rustc_hash::FxHashSet;
 use sc2_proto::raw::{unit_order::Target as ProtoTarget, CloakState as ProtoCloakState, Unit as ProtoUnit};
 use std::{ops::Deref, sync::Mutex};
 
+/// Identifies a unit. Only comes from SC2, so it can't be confused with another number.
+///
+/// Keep these to remember a unit between steps. SC2 gives units in the fog of war other tags
+/// than visible ones, so the tag of a mineral field or geyser changes as it goes in and out
+/// of vision. Use positions for those, which is what [`Expansion`](super::Expansion) does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct UnitTag(pub(super) u64);
+
+impl UnitTag {
+	/// The value SC2 uses, for APIs that still take a plain tag such as [`Debugger`](crate::debug::Debugger).
+	pub fn get(self) -> u64 {
+		self.0
+	}
+	/// Makes a tag from a value SC2 sent, for parts that still report plain tags
+	/// such as [`PassengerUnit`] and [`RallyTarget`].
+	pub fn from_raw(tag: u64) -> Self {
+		Self(tag)
+	}
+}
+impl From<UnitRef<'_>> for UnitTag {
+	#[inline]
+	fn from(u: UnitRef<'_>) -> Self {
+		u.data.tag
+	}
+}
+impl From<UnitTag> for Target {
+	#[inline]
+	fn from(tag: UnitTag) -> Self {
+		Target::Tag(tag.0)
+	}
+}
+impl From<UnitRef<'_>> for Target {
+	#[inline]
+	fn from(u: UnitRef<'_>) -> Self {
+		Target::Tag(u.data.tag.0)
+	}
+}
+
 /// Returns `parsed`, warning once per id when SC2 sent something this library doesn't know.
 ///
 /// IDs are generated from one game version, so a newer client can report ones missing from
@@ -43,7 +81,7 @@ pub(super) fn known<T>(kind: &'static str, id: i64, parsed: Option<T>) -> Option
 #[derive(Clone)]
 #[allow(missing_docs)]
 pub struct UnitData {
-	pub tag: u64,
+	pub tag: UnitTag,
 	pub type_id: UnitTypeId,
 	pub alliance: Alliance,
 	pub display_type: DisplayType,
@@ -80,14 +118,14 @@ pub struct UnitData {
 	pub is_hallucination: bool,
 	// Not populated for enemies
 	pub orders: Vec<UnitOrder>,
-	pub addon_tag: Option<u64>,
+	pub addon_tag: Option<UnitTag>,
 	pub passengers: Vec<PassengerUnit>,
 	pub cargo_space_taken: Option<u32>,
 	pub cargo_space_max: Option<u32>,
 	pub assigned_harvesters: Option<u32>,
 	pub ideal_harvesters: Option<u32>,
 	pub weapon_cooldown: Option<f32>,
-	pub engaged_target_tag: Option<u64>,
+	pub engaged_target_tag: Option<UnitTag>,
 	pub buff_duration_remain: Option<u32>,
 	pub buff_duration_max: Option<u32>,
 	pub rally_targets: Vec<RallyTarget>,
@@ -114,7 +152,7 @@ impl UnitData {
 			}
 		};
 		Some(Self {
-			tag: u.tag(),
+			tag: UnitTag(u.tag()),
 			type_id,
 			alliance: Alliance::from_proto(u.alliance()),
 			display_type: match DisplayType::from_proto(u.display_type()) {
@@ -187,7 +225,7 @@ impl UnitData {
 					progress: order.progress(),
 				})
 				.collect(),
-			addon_tag: u.add_on_tag,
+			addon_tag: u.add_on_tag.map(UnitTag),
 			passengers: u
 				.passengers
 				.iter()
@@ -213,7 +251,7 @@ impl UnitData {
 			assigned_harvesters: u.assigned_harvesters.map(|x| x as u32),
 			ideal_harvesters: u.ideal_harvesters.map(|x| x as u32),
 			weapon_cooldown: u.weapon_cooldown,
-			engaged_target_tag: u.engaged_target_tag,
+			engaged_target_tag: u.engaged_target_tag.map(UnitTag),
 			buff_duration_remain: u.buff_duration_remain.map(|x| x as u32),
 			buff_duration_max: u.buff_duration_max.map(|x| x as u32),
 			rally_targets: u
@@ -395,9 +433,9 @@ impl UnitData {
 		}
 	}
 	/// Target tag of the current order.
-	pub fn tartag(&self) -> Option<u64> {
+	pub fn tartag(&self) -> Option<UnitTag> {
 		match self.target() {
-			Target::Tag(tag) => Some(tag),
+			Target::Tag(tag) => Some(UnitTag(tag)),
 			_ => None,
 		}
 	}

@@ -2,13 +2,11 @@
 
 use super::*;
 use crate::{
-	bot::Expansion,
 	consts::RACE_VALUES,
 	game_data::UnitTypeData,
-	next::{Budget, CalcTarget, Commands, MapData, UnitRef, Units},
+	next::{Budget, CalcTarget, Commands, Event, Expansion, MapData, UnitRef, UnitTag, Units},
 	player::Race,
 };
-use indexmap::IndexSet;
 use num_traits::ToPrimitive;
 use sc2_proto::{
 	common::ImageData,
@@ -17,6 +15,10 @@ use sc2_proto::{
 use std::sync::Arc;
 
 const MAP_SIZE: i32 = 64;
+
+fn t(tag: u64) -> UnitTag {
+	UnitTag(tag)
+}
 
 fn unit_type(id: UnitTypeId, attributes: &[Attribute]) -> UnitTypeData {
 	UnitTypeData {
@@ -67,14 +69,14 @@ fn empty_world() -> World {
 		enemy_start_center: Point2::new(50.0, 50.0),
 		ramps: Default::default(),
 		vision_blockers: vec![],
+		id_mismatches: vec![],
+		resource_tags: [t(100)].into_iter().collect(),
 	};
-	let mut minerals = IndexSet::default();
-	minerals.insert(100);
 	let expansion = Expansion {
 		loc: Point2::new(30.0, 30.0),
 		center: Point2::new(30.0, 30.0),
-		minerals,
-		geysers: Default::default(),
+		minerals: vec![Point2::new(5.0, 5.0)],
+		geysers: vec![],
 		alliance: Alliance::Neutral,
 		base: None,
 	};
@@ -139,8 +141,8 @@ fn world_is_thread_safe_without_the_rayon_feature() {
 		&[],
 	);
 	let total = std::thread::scope(|s| {
-		let a = s.spawn(|| world.my().workers().iter().map(|u| u.tag).sum::<u64>());
-		let b = s.spawn(|| world.my().workers().iter().map(|u| u.tag).sum::<u64>());
+		let a = s.spawn(|| world.my().workers().iter().map(|u| u.tag.get()).sum::<u64>());
+		let b = s.spawn(|| world.my().workers().iter().map(|u| u.tag.get()).sum::<u64>());
 		a.join().unwrap() + b.join().unwrap()
 	});
 	assert_eq!(total, 6);
@@ -160,12 +162,12 @@ fn units_are_sorted_into_groups() {
 	);
 	assert_eq!(world.all().len(), 4);
 	assert_eq!(world.my().all().len(), 2);
-	assert_eq!(world.my().workers().first().unwrap().tag, 1);
-	assert_eq!(world.my().townhalls().first().unwrap().tag, 2);
-	assert_eq!(world.enemy().units().first().unwrap().tag, 3);
-	assert_eq!(world.mineral_fields().first().unwrap().tag, 100);
+	assert_eq!(world.my().workers().first().unwrap().tag, t(1));
+	assert_eq!(world.my().townhalls().first().unwrap().tag, t(2));
+	assert_eq!(world.enemy().units().first().unwrap().tag, t(3));
+	assert_eq!(world.mineral_fields().first().unwrap().tag, t(100));
 	assert_eq!(world.expansions[0].alliance, Alliance::Own);
-	assert_eq!(world.expansions[0].base, Some(2));
+	assert_eq!(world.expansions[0].base, Some(t(2)));
 }
 
 #[test]
@@ -180,15 +182,15 @@ fn group_lookup_only_finds_members() {
 		&[],
 	);
 	let workers = world.my().workers();
-	assert!(workers.get(3).is_some());
-	assert!(workers.get(2).is_none());
-	assert!(workers.get(99).is_none());
-	assert_eq!(world.unit(2).unwrap().type_id, UnitTypeId::Nexus);
+	assert!(workers.get(t(3)).is_some());
+	assert!(workers.get(t(2)).is_none());
+	assert!(workers.get(t(99)).is_none());
+	assert_eq!(world.unit(t(2)).unwrap().type_id, UnitTypeId::Nexus);
 
 	let far = workers.filter(|u| u.position.x > 5.0);
-	assert!(far.get(3).is_some());
-	assert!(far.get(1).is_none());
-	assert_eq!(workers.closest(Point2::new(8.0, 8.0)).unwrap().tag, 3);
+	assert!(far.get(t(3)).is_some());
+	assert!(far.get(t(1)).is_none());
+	assert_eq!(workers.closest(Point2::new(8.0, 8.0)).unwrap().tag, t(3));
 }
 
 #[test]
@@ -199,11 +201,11 @@ fn losing_health_counts_as_attacked() {
 		u
 	};
 	let (first, _) = step(&empty_world(), vec![healthy(45.0)], &[]);
-	assert!(!first.unit(1).unwrap().is_attacked());
+	assert!(!first.unit(t(1)).unwrap().is_attacked());
 
 	let (second, _) = step(&first, vec![healthy(30.0)], &[]);
-	assert!(second.unit(1).unwrap().is_attacked());
-	assert_eq!(second.unit(1).unwrap().damage_taken(), 15);
+	assert!(second.unit(t(1)).unwrap().is_attacked());
+	assert_eq!(second.unit(t(1)).unwrap().damage_taken(), 15);
 }
 
 /// `Unit::is_attacked` in the old API returns `true` here, because `None < Some(_)`.
@@ -215,8 +217,8 @@ fn losing_the_health_reading_is_not_being_attacked() {
 
 	let snapshot = unit(1, UnitTypeId::Marine, ProtoAlliance::Enemy, (1.0, 1.0));
 	let (second, _) = step(&first, vec![snapshot], &[]);
-	assert_eq!(second.unit(1).unwrap().health, None);
-	assert!(!second.unit(1).unwrap().is_attacked());
+	assert_eq!(second.unit(t(1)).unwrap().health, None);
+	assert!(!second.unit(t(1)).unwrap().is_attacked());
 }
 
 #[test]
@@ -227,7 +229,7 @@ fn hallucinations_stay_known_after_the_flag_disappears() {
 
 	let unflagged = unit(1, UnitTypeId::Marine, ProtoAlliance::Enemy, (1.0, 1.0));
 	let (second, _) = step(&first, vec![unflagged], &[]);
-	assert!(second.unit(1).unwrap().is_hallucination);
+	assert!(second.unit(t(1)).unwrap().is_hallucination);
 	assert_eq!(second.enemies_current.get(&UnitTypeId::Marine), None);
 }
 
@@ -242,10 +244,10 @@ fn detection_by_enemy_detector_reveals_your_units() {
 	raven.set_detect_range(11.0);
 
 	let (near, _) = step(&empty_world(), vec![mine((12.0, 10.0)), raven.clone()], &[]);
-	assert!(near.unit(1).unwrap().is_revealed);
+	assert!(near.unit(t(1)).unwrap().is_revealed);
 
 	let (far, _) = step(&empty_world(), vec![mine((60.0, 60.0)), raven], &[]);
-	assert!(!far.unit(1).unwrap().is_revealed);
+	assert!(!far.unit(t(1)).unwrap().is_revealed);
 }
 
 #[test]
@@ -255,21 +257,27 @@ fn events_report_new_finished_and_dead_units() {
 	let probe = unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0));
 
 	let (first, events) = step(&empty_world(), vec![probe.clone(), building.clone()], &[]);
-	assert!(events.iter().any(|e| matches!(e, Event::UnitCreated(1))));
-	assert!(events.iter().any(|e| matches!(e, Event::ConstructionStarted(2))));
+	assert!(events
+		.iter()
+		.any(|e| matches!(e, Event::UnitCreated(tag) if *tag == t(1))));
+	assert!(events
+		.iter()
+		.any(|e| matches!(e, Event::ConstructionStarted(tag) if *tag == t(2))));
 
 	let (second, events) = step(&first, vec![probe.clone(), building.clone()], &[]);
 	assert!(events.is_empty());
 
 	building.set_build_progress(1.0);
 	let (third, events) = step(&second, vec![probe, building.clone()], &[]);
-	assert!(events.iter().any(|e| matches!(e, Event::ConstructionComplete(2))));
+	assert!(events
+		.iter()
+		.any(|e| matches!(e, Event::ConstructionComplete(tag) if *tag == t(2))));
 
 	let (fourth, events) = step(&third, vec![building], &[1]);
 	assert!(events
 		.iter()
-		.any(|e| matches!(e, Event::UnitDestroyed(1, Some(Alliance::Own)))));
-	assert!(fourth.unit(1).is_none());
+		.any(|e| matches!(e, Event::UnitDestroyed(tag, Some(Alliance::Own)) if *tag == t(1))));
+	assert!(fourth.unit(t(1)).is_none());
 }
 
 #[test]
@@ -277,8 +285,8 @@ fn mined_out_minerals_leave_their_expansion() {
 	let (world, events) = step(&empty_world(), vec![], &[100]);
 	assert!(events
 		.iter()
-		.any(|e| matches!(e, Event::UnitDestroyed(100, Some(Alliance::Neutral)))));
-	assert!(world.expansions[0].minerals.is_empty());
+		.any(|e| matches!(e, Event::UnitDestroyed(tag, Some(Alliance::Neutral)) if *tag == t(100))));
+	assert!(world.minerals_of(&world.expansions[0]).is_empty());
 }
 
 /// Building the next world doesn't change the previous one.
@@ -289,10 +297,10 @@ fn previous_world_stays_intact() {
 		vec![unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0))],
 		&[100],
 	);
-	let tag_before = first.unit(1).unwrap().tag;
+	let tag_before = first.unit(t(1)).unwrap().tag;
 	let (second, _) = step(&first, vec![], &[1]);
-	assert!(second.unit(1).is_none());
-	assert_eq!(first.unit(1).unwrap().tag, tag_before);
+	assert!(second.unit(t(1)).is_none());
+	assert_eq!(first.unit(t(1)).unwrap().tag, tag_before);
 }
 
 #[test]
@@ -307,7 +315,7 @@ fn identical_commands_are_merged() {
 	);
 	let mut cmds = Commands::default();
 	for w in world.my().workers() {
-		cmds.gather(w, 100, false);
+		cmds.gather(w, t(100), false);
 	}
 	let actions = cmds.take_actions();
 	assert_eq!(actions.len(), 1);
@@ -346,6 +354,8 @@ fn speed_bonus_applies_on_creep_only() {
 		enemy_start_center: Point2::default(),
 		ramps: Default::default(),
 		vision_blockers: vec![],
+		id_mismatches: vec![],
+		resource_tags: Default::default(),
 	};
 	prev.map = Arc::new(map);
 
@@ -357,7 +367,7 @@ fn speed_bonus_applies_on_creep_only() {
 		with_creep(&mut res, creep);
 		let (world, _) = build_world(&prev, &res, Default::default());
 		assert_eq!(world.has_creep(Point2::new(5.0, 5.0)), creep != 0);
-		world.unit(1).unwrap().real_speed()
+		world.unit(t(1)).unwrap().real_speed()
 	};
 	assert_eq!(speed(0), 3.0);
 	assert!((speed(0xFF) - 3.0 * 2.67).abs() < 0.001);
@@ -371,7 +381,7 @@ fn enemy_deaths_are_labelled_as_enemy() {
 	let (_, events) = step(&first, vec![], &[1]);
 	assert!(events
 		.iter()
-		.any(|e| matches!(e, Event::UnitDestroyed(1, Some(Alliance::Enemy)))));
+		.any(|e| matches!(e, Event::UnitDestroyed(tag, Some(Alliance::Enemy)) if *tag == t(1))));
 }
 
 #[test]
@@ -381,8 +391,10 @@ fn death_of_a_neutral_unit_or_a_stranger_is_labelled_correctly() {
 	let (_, events) = step(&first, vec![], &[5, 77]);
 	assert!(events
 		.iter()
-		.any(|e| matches!(e, Event::UnitDestroyed(5, Some(Alliance::Neutral)))));
-	assert!(events.iter().any(|e| matches!(e, Event::UnitDestroyed(77, None))));
+		.any(|e| matches!(e, Event::UnitDestroyed(tag, Some(Alliance::Neutral)) if *tag == t(5))));
+	assert!(events
+		.iter()
+		.any(|e| matches!(e, Event::UnitDestroyed(tag, None) if *tag == t(77))));
 }
 
 fn observation_hidden_at(units: Vec<ProtoUnit>, hidden: bool) -> ResponseObservation {
@@ -407,9 +419,9 @@ fn enemy_memory_keeps_units_that_left_vision() {
 
 	// Its last position is in fog now, so it's believed to still be there
 	let (second, _) = build_world(&first, &observation_hidden_at(vec![], true), Default::default());
-	assert!(second.unit(1).is_none());
+	assert!(second.unit(t(1)).is_none());
 	assert_eq!(second.enemy().all().len(), 0);
-	let remembered = second.enemy_memory().all().get(1).unwrap();
+	let remembered = second.enemy_memory().all().get(t(1)).unwrap();
 	assert!(remembered.is_hidden());
 	assert_eq!(remembered.position, Point2::new(9.0, 9.0));
 	assert_eq!(second.remembered_counter().count(UnitTypeId::Marine), 1);
@@ -454,7 +466,7 @@ fn enemy_memory_forgets_dead_units_and_labels_them() {
 	assert_eq!(third.enemy_memory().all().len(), 0);
 	assert!(events
 		.iter()
-		.any(|e| matches!(e, Event::UnitDestroyed(1, Some(Alliance::Enemy)))));
+		.any(|e| matches!(e, Event::UnitDestroyed(tag, Some(Alliance::Enemy)) if *tag == t(1))));
 }
 
 #[test]
@@ -470,18 +482,18 @@ fn sorted_and_found_groups_can_still_look_up_tags() {
 	);
 	let workers = world.my().workers();
 	let sorted = workers.sorted(|u| u.position.x);
-	assert_eq!(sorted.tags().collect::<Vec<_>>(), [2, 3, 1]);
-	assert_eq!(sorted.get(1).unwrap().tag, 1);
-	assert!(sorted.get(99).is_none());
+	assert_eq!(sorted.tags().collect::<Vec<_>>(), [t(2), t(3), t(1)]);
+	assert_eq!(sorted.get(t(1)).unwrap().tag, t(1));
+	assert!(sorted.get(t(99)).is_none());
 
-	let found = workers.find_tags(&[3, 1, 99]);
-	assert_eq!(found.tags().collect::<Vec<_>>(), [3, 1]);
+	let found = workers.find_tags(&[t(3), t(1), t(99)]);
+	assert_eq!(found.tags().collect::<Vec<_>>(), [t(3), t(1)]);
 
-	let collected = world.units_from(workers.iter().filter(|u| u.tag != 2));
-	assert_eq!(collected.tags().collect::<Vec<_>>(), [1, 3]);
-	assert_eq!(workers.furthest(Point2::new(0.0, 0.0)).unwrap().tag, 1);
-	assert_eq!(workers.sum(|u| u.tag), 6);
-	assert_eq!(workers.max_value(|u| u.tag), Some(3));
+	let collected = world.units_from(workers.iter().filter(|u| u.tag != t(2)));
+	assert_eq!(collected.tags().collect::<Vec<_>>(), [t(1), t(3)]);
+	assert_eq!(workers.furthest(Point2::new(0.0, 0.0)).unwrap().tag, t(1));
+	assert_eq!(workers.sum(|u| u.tag.get()), 6);
+	assert_eq!(workers.max_value(|u| u.tag), Some(t(3)));
 }
 
 #[test]
@@ -504,6 +516,8 @@ fn counters_and_budget() {
 		enemy_start_center: Point2::default(),
 		ramps: Default::default(),
 		vision_blockers: vec![],
+		id_mismatches: vec![],
+		resource_tags: Default::default(),
 	});
 	let mut res = observation(
 		vec![unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0))],
@@ -561,6 +575,8 @@ fn weapon_stats_account_for_armor_and_attributes() {
 		enemy_start_center: Point2::default(),
 		ramps: Default::default(),
 		vision_blockers: vec![],
+		id_mismatches: vec![],
+		resource_tags: Default::default(),
 	});
 	let mut probe = unit(2, UnitTypeId::Probe, ProtoAlliance::Enemy, (1.0, 4.0));
 	probe.set_health(40.0);
@@ -572,8 +588,8 @@ fn weapon_stats_account_for_armor_and_attributes() {
 		],
 		&[],
 	);
-	let marine = world.unit(1).unwrap();
-	let target = world.unit(2).unwrap();
+	let marine = world.unit(t(1)).unwrap();
+	let target = world.unit(t(2)).unwrap();
 	// (6 + 4 light bonus - 1 armor) / 0.5 speed
 	assert_eq!(marine.real_weapon_vs(target), (18.0, 5.0));
 	assert_eq!(
@@ -593,10 +609,10 @@ fn sleeping_lasts_until_its_frame() {
 		vec![unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0))],
 		&[],
 	);
-	world.available_frames.insert(1, 10);
-	assert!(world.unit(1).unwrap().is_sleeping());
+	world.available_frames.insert(t(1), 10);
+	assert!(world.unit(t(1)).unwrap().is_sleeping());
 	world.game_loop = 10;
-	assert!(!world.unit(1).unwrap().is_sleeping());
+	assert!(!world.unit(t(1)).unwrap().is_sleeping());
 }
 
 /// A client newer than the ID tables reports IDs they don't have. The old parser panics on these.
@@ -614,8 +630,8 @@ fn unknown_ids_do_not_end_the_game() {
 	};
 	let (world, _) = step(&empty_world(), vec![worker, mystery], &[]);
 
-	assert!(world.unit(2).is_none());
-	let worker = world.unit(1).unwrap();
+	assert!(world.unit(t(2)).is_none());
+	let worker = world.unit(t(1)).unwrap();
 	assert!(worker.buffs.is_empty());
 	// Busy doing something unknown is still busy, so a bot won't re-task it
 	assert!(!worker.is_idle());
@@ -637,8 +653,111 @@ fn parallel_helpers_match_the_sequential_ones() {
 		&[],
 	);
 	let workers = world.my().workers();
-	assert_eq!(workers.par_sorted(|u| u.position.x).tags().collect::<Vec<_>>(), [2, 3, 1]);
-	assert_eq!(workers.par_filter(|u| u.tag != 2).tags().collect::<Vec<_>>(), [1, 3]);
-	assert_eq!(workers.par_tags().sum::<u64>(), 6);
+	assert_eq!(
+		workers.par_sorted(|u| u.position.x).tags().collect::<Vec<_>>(),
+		[t(2), t(3), t(1)]
+	);
+	assert_eq!(
+		workers.par_filter(|u| u.tag != t(2)).tags().collect::<Vec<_>>(),
+		[t(1), t(3)]
+	);
+	assert_eq!(workers.par_tags().map(|tag| tag.get()).sum::<u64>(), 6);
 	assert_eq!(workers.par_iter().count(), 3);
+}
+
+/// SC2 changes a resource's tag as it goes in and out of vision, but never its position.
+#[test]
+fn expansion_resources_are_found_by_position_whatever_their_tag() {
+	let mineral = |tag| unit(tag, UnitTypeId::MineralField, ProtoAlliance::Neutral, (5.0, 5.0));
+	let (fogged, _) = step(&empty_world(), vec![mineral(900)], &[]);
+	let exp = fogged.expansions[0].clone();
+	assert_eq!(fogged.minerals_of(&exp).first().unwrap().tag, t(900));
+
+	let (visible, _) = step(&fogged, vec![mineral(100)], &[]);
+	assert_eq!(visible.minerals_of(&exp).first().unwrap().tag, t(100));
+
+	let (mined_out, _) = step(&visible, vec![], &[100]);
+	assert!(mined_out.minerals_of(&exp).is_empty());
+}
+
+/// The first world must be built from a normal observation. This documents what that gives:
+/// an enemy that's never been in an observation isn't in memory.
+#[test]
+fn enemy_memory_only_holds_what_was_observed() {
+	let (world, _) = step(
+		&empty_world(),
+		vec![unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0))],
+		&[],
+	);
+	assert_eq!(world.enemy_memory().all().len(), 0);
+}
+
+mod ids {
+	use crate::next::id_check::check_ids;
+	use sc2_proto::{
+		data::{AbilityData, BuffData, UnitTypeData as ProtoUnitTypeData, UpgradeData},
+		sc2api::ResponseData,
+	};
+
+	fn unit(id: u32, name: &str) -> ProtoUnitTypeData {
+		let mut u = ProtoUnitTypeData::new();
+		u.set_unit_id(id);
+		u.set_name(name.to_string());
+		u
+	}
+
+	#[test]
+	fn matching_tables_report_nothing() {
+		let mut data = ResponseData::new();
+		data.units.push(unit(84, "Probe"));
+		// Names differ in punctuation, and the generator joins ability names
+		data.units.push(unit(0, "Whatever"));
+		data.units.push(unit(9_999, ""));
+		let mut ability = AbilityData::new();
+		ability.set_ability_id(1);
+		ability.set_link_name("Smart".to_string());
+		data.abilities.push(ability);
+		assert_eq!(check_ids(&data), vec![]);
+	}
+
+	#[test]
+	fn reports_wrong_names_and_missing_ids() {
+		let mut data = ResponseData::new();
+		data.units.push(unit(84, "Zealot"));
+		data.units.push(unit(9_999, "BrandNewUnit"));
+		let mut upgrade = UpgradeData::new();
+		upgrade.set_upgrade_id(9_999);
+		upgrade.set_name("BrandNewUpgrade".to_string());
+		data.upgrades.push(upgrade);
+		let mut buff = BuffData::new();
+		buff.set_buff_id(294);
+		buff.set_name("SomethingElse".to_string());
+		data.buffs.push(buff);
+		let found = check_ids(&data);
+		let summary = found
+			.iter()
+			.map(|m| (m.kind, m.id, m.table_name.is_some()))
+			.collect::<Vec<_>>();
+		assert_eq!(
+			summary,
+			vec![
+				("unit", 84, true),
+				("unit", 9_999, false),
+				("upgrade", 9_999, false),
+				("buff", 294, true)
+			]
+		);
+		assert_eq!(found[0].table_name.as_deref(), Some("Probe"));
+		assert_eq!(found[0].client_name, "Zealot");
+	}
+
+	#[test]
+	fn abilities_missing_from_the_tables_are_not_reported() {
+		let mut data = ResponseData::new();
+		let mut ability = AbilityData::new();
+		ability.set_ability_id(9_999);
+		ability.set_link_name("Taunt".to_string());
+		data.abilities.push(ability);
+		assert_eq!(check_ids(&data), vec![]);
+	}
 }

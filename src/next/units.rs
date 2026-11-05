@@ -1,4 +1,4 @@
-use super::{UnitRef, World};
+use super::{UnitRef, UnitTag, World};
 use crate::{
 	distance::{Center, Distance},
 	geometry::Point2,
@@ -56,7 +56,7 @@ impl<'w> Units<'w> {
 		}
 	}
 	/// Iterates over the tags of the units.
-	pub fn tags(&self) -> impl Iterator<Item = u64> + '_ {
+	pub fn tags(&self) -> impl Iterator<Item = UnitTag> + '_ {
 		self.iter().map(|u| u.tag)
 	}
 	/// First unit of the group.
@@ -64,7 +64,7 @@ impl<'w> Units<'w> {
 		self.ids.first().map(|&id| self.world.unit_at(id))
 	}
 	/// Finds unit with given tag, if it's in this group.
-	pub fn get(&self, tag: u64) -> Option<UnitRef<'w>> {
+	pub fn get(&self, tag: UnitTag) -> Option<UnitRef<'w>> {
 		if self.searchable {
 			let id = self.world.index_of(tag)?;
 			self.ids.binary_search(&id).ok()?;
@@ -74,11 +74,11 @@ impl<'w> Units<'w> {
 		}
 	}
 	/// Checks if unit with given tag is in this group.
-	pub fn contains_tag(&self, tag: u64) -> bool {
+	pub fn contains_tag(&self, tag: UnitTag) -> bool {
 		self.get(tag).is_some()
 	}
 	/// Finds units with given tags, in the order of the tags.
-	pub fn find_tags<'a>(&self, tags: impl IntoIterator<Item = &'a u64>) -> Units<'w> {
+	pub fn find_tags<'a>(&self, tags: impl IntoIterator<Item = &'a UnitTag>) -> Units<'w> {
 		let ids = tags
 			.into_iter()
 			.filter_map(|&tag| self.get(tag).map(UnitRef::id))
@@ -254,7 +254,7 @@ impl<'w> Units<'w> {
 		self.ids.par_iter().map(move |&id| world.unit_at(id))
 	}
 	/// Iterates over the tags of the units in parallel.
-	pub fn par_tags(&self) -> impl rayon::iter::ParallelIterator<Item = u64> + '_ {
+	pub fn par_tags(&self) -> impl rayon::iter::ParallelIterator<Item = UnitTag> + '_ {
 		use rayon::prelude::*;
 		self.par_iter().map(|u| u.tag)
 	}
@@ -266,7 +266,11 @@ impl<'w> Units<'w> {
 	{
 		use rayon::prelude::*;
 		let world = self.world;
-		let mut keyed = self.ids.par_iter().map(|&id| (f(world.unit_at(id)), id)).collect::<Vec<_>>();
+		let mut keyed = self
+			.ids
+			.par_iter()
+			.map(|&id| (f(world.unit_at(id)), id))
+			.collect::<Vec<_>>();
 		keyed.par_sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
 		Units::unordered(world, Cow::Owned(keyed.into_iter().map(|(_, id)| id).collect()))
 	}
