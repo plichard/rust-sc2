@@ -1,4 +1,4 @@
-//! Prototype of an alternative architecture. The existing API is untouched.
+//! An alternative architecture, next to the existing API.
 //!
 //! Instead of one `Bot` that your struct derefs to, the library hands you a [`Context`]:
 //!
@@ -55,17 +55,44 @@
 //! }
 //! ```
 
+mod build;
+mod combat;
 mod commands;
+mod map;
+mod queries;
 mod runner;
 mod unit;
 mod units;
 mod world;
 
-pub use commands::Commands;
-pub use runner::run_vs_computer;
+pub use combat::CalcTarget;
+pub use commands::{Budget, Commands};
+pub use map::MapData;
+pub use runner::{run_ladder_game, run_vs_computer, run_vs_human, LaunchOptions, RunnerMulti, RunnerSingle};
 pub use unit::{UnitData, UnitRef};
 pub use units::{PlayerUnits, Units};
-pub use world::{MapData, World};
+pub use world::{CountOptions, World};
+
+/// Everything a bot usually needs: `use rust_sc2::next::prelude::*;`.
+pub mod prelude {
+	pub use super::{
+		run_ladder_game, run_vs_computer, run_vs_human, Budget, CalcTarget, Commands, Context, LaunchOptions,
+		MapData, Player, PlayerUnits, RunnerMulti, RunnerSingle, UnitData, UnitRef, Units, World,
+	};
+	pub use crate::{
+		action::Target,
+		bot::{Expansion, PlacementOptions},
+		client::SC2Result,
+		consts::{ALL_PRODUCERS, PRODUCERS, RESEARCHERS, TECH_REQUIREMENTS},
+		debug::Debugger,
+		distance::{Center, Distance, DistanceIterator, DistanceSlice},
+		game_state::Alliance,
+		geometry::{Point2, Point3},
+		ids::*,
+		player::{AIBuild, Computer, Difficulty, GameResult, Race},
+		Event, PlayerSettings,
+	};
+}
 
 use crate::{api::API, debug::Debugger, player::GameResult, Event, PlayerSettings, SC2Result};
 
@@ -77,11 +104,12 @@ pub struct Context {
 	pub world: World,
 	/// Orders to send when your turn ends.
 	pub cmds: Commands,
+	/// Resources left to spend this turn.
+	pub budget: Budget,
 	/// Debug drawing and cheats.
 	pub debug: Debugger,
 	/// Connection to SC2, for placement and pathing queries.
 	pub api: API,
-	first_events: Vec<Event>,
 }
 
 /// Trait that bots implement. `self` holds only your own state.

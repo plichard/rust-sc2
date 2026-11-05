@@ -1,10 +1,9 @@
-//! A copy of `DebugAI` from the `bot` crate, ported to the `next` architecture.
+//! `DebugAI` from the `bot` crate, on the `next` architecture.
 //!
 //! The two workarounds the original needs are gone: `self.expansions.clone()`, and
 //! collecting labels into a `Vec` so that `self.debug` can be borrowed mutably.
 
-use rust_sc2::next::{Context, Player};
-use rust_sc2::prelude::*;
+use rust_sc2::next::prelude::*;
 use rustc_hash::FxHashSet;
 
 #[path = "next_args/mod.rs"]

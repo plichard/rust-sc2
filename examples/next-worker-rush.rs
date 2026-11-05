@@ -1,14 +1,12 @@
 //! `examples/worker-rush.rs`, ported to the `next` architecture.
 
-use rust_sc2::next::{Context, Player};
-use rust_sc2::prelude::*;
+use rust_sc2::next::prelude::*;
 
 #[path = "next_args/mod.rs"]
 mod next_args;
 
 #[derive(Default)]
 struct WorkerRushAI {
-	mineral_forward: u64,
 	mineral_back: u64,
 }
 
@@ -22,9 +20,6 @@ impl Player for WorkerRushAI {
 		if let Some(townhall) = world.my().townhalls().first() {
 			ctx.cmds.train(townhall, UnitTypeId::Probe, false);
 		}
-		if let Some(closest) = world.mineral_fields().closest(world.map.enemy_start) {
-			self.mineral_forward = closest.tag;
-		}
 		if let Some(closest) = world.mineral_fields().closest(world.map.start_location) {
 			self.mineral_back = closest.tag;
 		}
@@ -34,6 +29,12 @@ impl Player for WorkerRushAI {
 	fn on_step(&mut self, ctx: &mut Context, _iteration: usize) -> SC2Result<()> {
 		let Context { world, cmds, .. } = ctx;
 		let enemy_start = world.map.enemy_start;
+		// SC2 gives minerals in the fog different tags, so this can't be remembered between
+		// steps. The original example does, which is why its workers never leave home.
+		let mineral_forward = match world.mineral_fields().closest(enemy_start) {
+			Some(mineral) => mineral.tag,
+			None => return Ok(()),
+		};
 		let workers = world.my().workers();
 
 		let ground_attackers = world
@@ -52,7 +53,7 @@ impl Player for WorkerRushAI {
 				} else if u.in_range_of(closest, 2.0) {
 					cmds.gather(u, self.mineral_back, false);
 				} else {
-					cmds.gather(u, self.mineral_forward, false);
+					cmds.gather(u, mineral_forward, false);
 				}
 			}
 			return Ok(());
@@ -65,7 +66,7 @@ impl Player for WorkerRushAI {
 		for u in &workers {
 			match ground_structures.closest(u) {
 				Some(closest) => cmds.attack(u, Target::Tag(closest.tag), false),
-				None => cmds.gather(u, self.mineral_forward, false),
+				None => cmds.gather(u, mineral_forward, false),
 			}
 		}
 		Ok(())

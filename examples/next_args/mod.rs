@@ -1,8 +1,7 @@
 //! Shared command line for the `next-*` examples.
 
 use clap::Parser;
-use rust_sc2::next::{run_vs_computer, Player};
-use rust_sc2::prelude::*;
+use rust_sc2::next::prelude::*;
 
 #[derive(Parser)]
 struct Args {

@@ -1,15 +1,20 @@
 //! These run without SC2: observations are built by hand and fed to `build_world`.
 
 use super::*;
-use crate::{action::Action, next::Commands};
-use crate::{consts::RACE_VALUES, game_data::UnitTypeData, geometry::Point2};
+use crate::{
+	bot::Expansion,
+	consts::RACE_VALUES,
+	game_data::UnitTypeData,
+	next::{Budget, CalcTarget, Commands, MapData, UnitRef, Units},
+	player::Race,
+};
 use indexmap::IndexSet;
 use num_traits::ToPrimitive;
 use sc2_proto::{
 	common::ImageData,
 	raw::{Alliance as ProtoAlliance, Unit as ProtoUnit},
-	sc2api::ResponseObservation,
 };
+use std::sync::Arc;
 
 const MAP_SIZE: i32 = 64;
 
@@ -51,6 +56,7 @@ fn empty_world() -> World {
 	let map = MapData {
 		player_id: 1,
 		enemy_player_id: 2,
+		opponent_id: String::new(),
 		race: Race::Protoss,
 		race_values: RACE_VALUES[&Race::Protoss].clone(),
 		game_info: Default::default(),
@@ -307,4 +313,332 @@ fn identical_commands_are_merged() {
 	assert_eq!(actions.len(), 1);
 	assert!(matches!(&actions[0], Action::UnitCommand(_, _, units, _) if units == &[1, 2]));
 	assert!(cmds.take_actions().is_empty());
+}
+
+fn with_creep(res: &mut ResponseObservation, value: u8) {
+	let raw = res
+		.observation
+		.mut_or_insert_default()
+		.raw_data
+		.mut_or_insert_default();
+	raw.map_state.mut_or_insert_default().creep =
+		Some(image(vec![value; (MAP_SIZE * MAP_SIZE / 8) as usize])).into();
+}
+
+/// A set bit in SC2's creep map means creep. The old `Unit::real_speed` has this backwards.
+#[test]
+fn speed_bonus_applies_on_creep_only() {
+	let mut prev = empty_world();
+	let mut data = GameData::clone(&prev.map.game_data);
+	data.units
+		.insert(UnitTypeId::Queen, unit_type(UnitTypeId::Queen, &[]));
+	let map = MapData {
+		game_data: data,
+		player_id: 1,
+		enemy_player_id: 2,
+		opponent_id: String::new(),
+		race: Race::Zerg,
+		race_values: RACE_VALUES[&Race::Zerg].clone(),
+		game_info: Default::default(),
+		start_location: Point2::default(),
+		enemy_start: Point2::default(),
+		start_center: Point2::default(),
+		enemy_start_center: Point2::default(),
+		ramps: Default::default(),
+		vision_blockers: vec![],
+	};
+	prev.map = Arc::new(map);
+
+	let speed = |creep: u8| {
+		let mut res = observation(
+			vec![unit(1, UnitTypeId::Queen, ProtoAlliance::Self_, (5.0, 5.0))],
+			&[],
+		);
+		with_creep(&mut res, creep);
+		let (world, _) = build_world(&prev, &res, Default::default());
+		assert_eq!(world.has_creep(Point2::new(5.0, 5.0)), creep != 0);
+		world.unit(1).unwrap().real_speed()
+	};
+	assert_eq!(speed(0), 3.0);
+	assert!((speed(0xFF) - 3.0 * 2.67).abs() < 0.001);
+}
+
+/// The old code only labels enemy deaths when the unit was a hallucination or cached.
+#[test]
+fn enemy_deaths_are_labelled_as_enemy() {
+	let marine = unit(1, UnitTypeId::Marine, ProtoAlliance::Enemy, (1.0, 1.0));
+	let (first, _) = step(&empty_world(), vec![marine], &[]);
+	let (_, events) = step(&first, vec![], &[1]);
+	assert!(events
+		.iter()
+		.any(|e| matches!(e, Event::UnitDestroyed(1, Some(Alliance::Enemy)))));
+}
+
+#[test]
+fn death_of_a_neutral_unit_or_a_stranger_is_labelled_correctly() {
+	let rock = unit(5, UnitTypeId::Marine, ProtoAlliance::Neutral, (1.0, 1.0));
+	let (first, _) = step(&empty_world(), vec![rock], &[]);
+	let (_, events) = step(&first, vec![], &[5, 77]);
+	assert!(events
+		.iter()
+		.any(|e| matches!(e, Event::UnitDestroyed(5, Some(Alliance::Neutral)))));
+	assert!(events.iter().any(|e| matches!(e, Event::UnitDestroyed(77, None))));
+}
+
+fn observation_hidden_at(units: Vec<ProtoUnit>, hidden: bool) -> ResponseObservation {
+	let mut res = observation(units, &[]);
+	if hidden {
+		let tiles = (MAP_SIZE * MAP_SIZE) as usize;
+		let raw = res
+			.observation
+			.mut_or_insert_default()
+			.raw_data
+			.mut_or_insert_default();
+		raw.map_state.mut_or_insert_default().visibility = Some(image(vec![1; tiles])).into();
+	}
+	res
+}
+
+#[test]
+fn enemy_memory_keeps_units_that_left_vision() {
+	let marine = unit(1, UnitTypeId::Marine, ProtoAlliance::Enemy, (9.0, 9.0));
+	let (first, _) = step(&empty_world(), vec![marine], &[]);
+	assert_eq!(first.enemy_memory().units().len(), 1);
+
+	// Its last position is in fog now, so it's believed to still be there
+	let (second, _) = build_world(&first, &observation_hidden_at(vec![], true), Default::default());
+	assert!(second.unit(1).is_none());
+	assert_eq!(second.enemy().all().len(), 0);
+	let remembered = second.enemy_memory().all().get(1).unwrap();
+	assert!(remembered.is_hidden());
+	assert_eq!(remembered.position, Point2::new(9.0, 9.0));
+	assert_eq!(second.remembered_counter().count(UnitTypeId::Marine), 1);
+
+	// The position is visible and it's not there, so it left
+	let (third, _) = step(&second, vec![], &[]);
+	assert_eq!(third.enemy_memory().all().len(), 0);
+}
+
+#[test]
+fn memory_only_units_do_not_leak_into_other_views() {
+	let marine = unit(1, UnitTypeId::Marine, ProtoAlliance::Enemy, (9.0, 9.0));
+	let (first, _) = step(&empty_world(), vec![marine], &[]);
+	let (second, _) = build_world(
+		&first,
+		&observation_hidden_at(
+			vec![unit(2, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0))],
+			true,
+		),
+		Default::default(),
+	);
+	assert_eq!(second.all().len(), 1);
+	assert_eq!(second.enemy_counter().count(UnitTypeId::Marine), 0);
+	// Only current units count for damage on the next step
+	let (third, _) = step(&second, vec![], &[]);
+	assert!(third.last_health.is_empty());
+}
+
+#[test]
+fn enemy_memory_forgets_dead_units_and_labels_them() {
+	let marine = unit(1, UnitTypeId::Marine, ProtoAlliance::Enemy, (9.0, 9.0));
+	let (first, _) = step(&empty_world(), vec![marine], &[]);
+	let (second, _) = build_world(&first, &observation_hidden_at(vec![], true), Default::default());
+	let mut res = observation_hidden_at(vec![], true);
+	let raw = res
+		.observation
+		.mut_or_insert_default()
+		.raw_data
+		.mut_or_insert_default();
+	raw.event.mut_or_insert_default().dead_units = vec![1];
+	let (third, events) = build_world(&second, &res, Default::default());
+	assert_eq!(third.enemy_memory().all().len(), 0);
+	assert!(events
+		.iter()
+		.any(|e| matches!(e, Event::UnitDestroyed(1, Some(Alliance::Enemy)))));
+}
+
+#[test]
+fn sorted_and_found_groups_can_still_look_up_tags() {
+	let (world, _) = step(
+		&empty_world(),
+		vec![
+			unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (9.0, 9.0)),
+			unit(2, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0)),
+			unit(3, UnitTypeId::Probe, ProtoAlliance::Self_, (5.0, 5.0)),
+		],
+		&[],
+	);
+	let workers = world.my().workers();
+	let sorted = workers.sorted(|u| u.position.x);
+	assert_eq!(sorted.tags().collect::<Vec<_>>(), [2, 3, 1]);
+	assert_eq!(sorted.get(1).unwrap().tag, 1);
+	assert!(sorted.get(99).is_none());
+
+	let found = workers.find_tags(&[3, 1, 99]);
+	assert_eq!(found.tags().collect::<Vec<_>>(), [3, 1]);
+
+	let collected = world.units_from(workers.iter().filter(|u| u.tag != 2));
+	assert_eq!(collected.tags().collect::<Vec<_>>(), [1, 3]);
+	assert_eq!(workers.furthest(Point2::new(0.0, 0.0)).unwrap().tag, 1);
+	assert_eq!(workers.sum(|u| u.tag), 6);
+	assert_eq!(workers.max_value(|u| u.tag), Some(3));
+}
+
+#[test]
+fn counters_and_budget() {
+	let mut first_world = empty_world();
+	let mut data = GameData::clone(&first_world.map.game_data);
+	data.units.get_mut(&UnitTypeId::Probe).unwrap().mineral_cost = 50;
+	data.units.get_mut(&UnitTypeId::Probe).unwrap().food_required = 1.0;
+	first_world.map = Arc::new(MapData {
+		game_data: data,
+		player_id: 1,
+		enemy_player_id: 2,
+		opponent_id: String::new(),
+		race: Race::Protoss,
+		race_values: RACE_VALUES[&Race::Protoss].clone(),
+		game_info: Default::default(),
+		start_location: Point2::default(),
+		enemy_start: Point2::default(),
+		start_center: Point2::default(),
+		enemy_start_center: Point2::default(),
+		ramps: Default::default(),
+		vision_blockers: vec![],
+	});
+	let mut res = observation(
+		vec![unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0))],
+		&[],
+	);
+	let common = res
+		.observation
+		.mut_or_insert_default()
+		.player_common
+		.mut_or_insert_default();
+	common.set_minerals(70);
+	common.set_food_cap(15);
+	common.set_food_used(14);
+	let (world, _) = build_world(&first_world, &res, Default::default());
+	assert_eq!(world.counter().count(UnitTypeId::Probe), 1);
+
+	let mut budget = Budget::new(&world);
+	assert!(budget.can_afford(&world, UnitTypeId::Probe, true));
+	budget.subtract_resources(&world, UnitTypeId::Probe, true);
+	assert_eq!(
+		(budget.minerals, budget.supply_left, budget.supply_used),
+		(20, 0, 15)
+	);
+	assert!(!budget.can_afford(&world, UnitTypeId::Probe, false));
+	// The world still reports what SC2 said
+	assert_eq!(world.minerals, 70);
+}
+
+#[test]
+fn weapon_stats_account_for_armor_and_attributes() {
+	use crate::game_data::{TargetType, Weapon};
+	let mut prev = empty_world();
+	let mut data = GameData::clone(&prev.map.game_data);
+	data.units.get_mut(&UnitTypeId::Marine).unwrap().weapons = vec![Weapon {
+		target: TargetType::Any,
+		damage: 6,
+		damage_bonus: vec![(Attribute::Light, 4)],
+		attacks: 1,
+		range: 5.0,
+		speed: 0.5,
+	}];
+	data.units.get_mut(&UnitTypeId::Probe).unwrap().attributes = vec![Attribute::Light];
+	data.units.get_mut(&UnitTypeId::Probe).unwrap().armor = 1;
+	prev.map = Arc::new(MapData {
+		game_data: data,
+		player_id: 1,
+		enemy_player_id: 2,
+		opponent_id: String::new(),
+		race: Race::Terran,
+		race_values: RACE_VALUES[&Race::Terran].clone(),
+		game_info: Default::default(),
+		start_location: Point2::default(),
+		enemy_start: Point2::default(),
+		start_center: Point2::default(),
+		enemy_start_center: Point2::default(),
+		ramps: Default::default(),
+		vision_blockers: vec![],
+	});
+	let mut probe = unit(2, UnitTypeId::Probe, ProtoAlliance::Enemy, (1.0, 4.0));
+	probe.set_health(40.0);
+	let (world, _) = step(
+		&prev,
+		vec![
+			unit(1, UnitTypeId::Marine, ProtoAlliance::Self_, (1.0, 1.0)),
+			probe,
+		],
+		&[],
+	);
+	let marine = world.unit(1).unwrap();
+	let target = world.unit(2).unwrap();
+	// (6 + 4 light bonus - 1 armor) / 0.5 speed
+	assert_eq!(marine.real_weapon_vs(target), (18.0, 5.0));
+	assert_eq!(
+		marine.calculate_weapon_stats(CalcTarget::Unit(target)),
+		(18.0, 5.0)
+	);
+	assert_eq!(marine.real_ground_weapon(&[]), (12.0, 5.0));
+	assert!(marine.in_real_range(target, 0.0));
+	assert!(marine.can_attack_unit(target));
+	assert_eq!(target.real_ground_range(), 0.0);
+}
+
+#[test]
+fn sleeping_lasts_until_its_frame() {
+	let (mut world, _) = step(
+		&empty_world(),
+		vec![unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0))],
+		&[],
+	);
+	world.available_frames.insert(1, 10);
+	assert!(world.unit(1).unwrap().is_sleeping());
+	world.game_loop = 10;
+	assert!(!world.unit(1).unwrap().is_sleeping());
+}
+
+/// A client newer than the ID tables reports IDs they don't have. The old parser panics on these.
+#[test]
+fn unknown_ids_do_not_end_the_game() {
+	let mut worker = unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0));
+	let mut order = sc2_proto::raw::UnitOrder::new();
+	order.set_ability_id(999_999);
+	worker.orders.push(order);
+	worker.buff_ids.push(999_999);
+	let mystery = {
+		let mut u = unit(2, UnitTypeId::Probe, ProtoAlliance::Enemy, (2.0, 2.0));
+		u.set_unit_type(999_999);
+		u
+	};
+	let (world, _) = step(&empty_world(), vec![worker, mystery], &[]);
+
+	assert!(world.unit(2).is_none());
+	let worker = world.unit(1).unwrap();
+	assert!(worker.buffs.is_empty());
+	// Busy doing something unknown is still busy, so a bot won't re-task it
+	assert!(!worker.is_idle());
+	assert_eq!(worker.ordered_ability(), Some(AbilityId::NullNull));
+	assert_eq!(world.my().workers().idle().len(), 0);
+}
+
+#[cfg(feature = "rayon")]
+#[test]
+fn parallel_helpers_match_the_sequential_ones() {
+	use rayon::iter::ParallelIterator;
+	let (world, _) = step(
+		&empty_world(),
+		vec![
+			unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (9.0, 9.0)),
+			unit(2, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0)),
+			unit(3, UnitTypeId::Probe, ProtoAlliance::Self_, (5.0, 5.0)),
+		],
+		&[],
+	);
+	let workers = world.my().workers();
+	assert_eq!(workers.par_sorted(|u| u.position.x).tags().collect::<Vec<_>>(), [2, 3, 1]);
+	assert_eq!(workers.par_filter(|u| u.tag != 2).tags().collect::<Vec<_>>(), [1, 3]);
+	assert_eq!(workers.par_tags().sum::<u64>(), 6);
+	assert_eq!(workers.par_iter().count(), 3);
 }

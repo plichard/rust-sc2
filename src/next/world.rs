@@ -1,68 +1,36 @@
-use super::{units::PlayerGroups, PlayerUnits, UnitData, UnitRef, Units};
+use super::{units::PlayerGroups, MapData, PlayerUnits, UnitData, UnitRef, Units};
 use crate::{
-	action::Target,
-	bot::Expansion,
-	consts::{RaceValues, FRAMES_PER_SECOND, INHIBITOR_IDS},
-	distance::Distance,
-	game_data::{Attribute, GameData},
-	game_info::GameInfo,
-	game_state::{Alliance, Effect},
+	action::{Action, ActionError},
+	bot::{Completion, Expansion, UnitAlias},
+	consts::{TECH_ALIAS, UNIT_ALIAS},
+	game_data::Cost,
+	game_state::{Alert, AvailableAbility, ChatMessage, Common, Effect, PsionicMatrix, Radar},
 	geometry::Point2,
-	ids::{AbilityId, EffectId, UnitTypeId, UpgradeId},
+	ids::{AbilityId, UnitTypeId, UpgradeId},
 	pixel_map::{PixelMap, VisibilityMap},
 	player::Race,
-	ramp::Ramps,
-	Event, FromProto,
+	score::Score,
 };
-use num_traits::FromPrimitive;
 use rustc_hash::{FxHashMap, FxHashSet};
-use sc2_proto::sc2api::ResponseObservation;
 use std::sync::Arc;
 
-/// Data that doesn't change during a game. Shared by every [`World`].
-pub struct MapData {
-	/// Your in-game id.
-	pub player_id: u32,
-	/// Opponent's in-game id.
-	pub enemy_player_id: u32,
-	/// Actual race of your bot.
-	pub race: Race,
-	/// Values which depend on your race.
-	pub race_values: RaceValues,
-	/// Information about the map.
-	pub game_info: GameInfo,
-	/// Constant information about abilities, unit types, upgrades, buffs and effects.
-	pub game_data: GameData,
-	/// Your starting location.
-	pub start_location: Point2,
-	/// Opponent's starting location.
-	pub enemy_start: Point2,
-	/// Center of the resources at your start location.
-	pub start_center: Point2,
-	/// Center of the resources at the opponent's start location.
-	pub enemy_start_center: Point2,
-	/// Ramps on the map.
-	pub ramps: Ramps,
-	/// Obstacles that block vision of ground units, but are pathable.
-	pub vision_blockers: Vec<Point2>,
-}
-
 #[derive(Default, Clone)]
-struct Groups {
-	all: Vec<u32>,
-	my: PlayerGroups,
-	enemy: PlayerGroups,
-	mineral_fields: Vec<u32>,
-	vespene_geysers: Vec<u32>,
-	resources: Vec<u32>,
-	destructables: Vec<u32>,
-	watchtowers: Vec<u32>,
-	inhibitor_zones: Vec<u32>,
+pub(super) struct Groups {
+	pub all: Vec<u32>,
+	pub my: PlayerGroups,
+	pub enemy: PlayerGroups,
+	pub memory: PlayerGroups,
+	pub mineral_fields: Vec<u32>,
+	pub vespene_geysers: Vec<u32>,
+	pub resources: Vec<u32>,
+	pub destructables: Vec<u32>,
+	pub watchtowers: Vec<u32>,
+	pub inhibitor_zones: Vec<u32>,
 }
 
 /// The game state of one step.
 ///
-/// [`build_world`] creates a new one from the previous one and the new observation.
+/// A new one is built from the previous one and the new observation.
 /// Nothing changes it while your bot runs, so it has no locks and no interior mutability.
 pub struct World {
 	/// Data that doesn't change during the game.
@@ -87,6 +55,8 @@ pub struct World {
 	pub supply_used: u32,
 	/// Your free supply.
 	pub supply_left: u32,
+	/// Everything SC2 reported about your economy and army.
+	pub common: Common,
 	/// Requested or detected race of your opponent.
 	pub enemy_race: Race,
 	/// Your ready upgrades.
@@ -99,6 +69,24 @@ pub struct World {
 	pub visibility: VisibilityMap,
 	/// Current effects on the map.
 	pub effects: Vec<Effect>,
+	/// Terran radars on the map.
+	pub radars: Vec<Radar>,
+	/// Protoss power from pylons and warp prisms.
+	pub psionic_matrix: Vec<PsionicMatrix>,
+	/// Current camera position.
+	pub camera: Point2,
+	/// Alerts raised since the previous step.
+	pub alerts: Vec<Alert>,
+	/// Abilities available through the UI.
+	pub available_abilities: Vec<AvailableAbility>,
+	/// SC2 score data.
+	pub score: Score,
+	/// Messages in game chat since the previous step.
+	pub chat: Vec<ChatMessage>,
+	/// Actions executed on the previous step.
+	pub actions: Vec<Action>,
+	/// Errors of actions from the previous step.
+	pub action_errors: Vec<ActionError>,
 	/// Tags of units which died since the previous step.
 	pub dead_units: Vec<u64>,
 	/// All expansions, closest to your start location first.
@@ -111,19 +99,26 @@ pub struct World {
 	pub enemies_ordered: FxHashMap<UnitTypeId, usize>,
 	/// Ready enemy units, counted by type.
 	pub enemies_current: FxHashMap<UnitTypeId, usize>,
+	/// In-progress enemy units in [`enemy_memory`](Self::enemy_memory), counted by type.
+	pub remembered_ordered: FxHashMap<UnitTypeId, usize>,
+	/// Ready enemy units in [`enemy_memory`](Self::enemy_memory), counted by type.
+	pub remembered_current: FxHashMap<UnitTypeId, usize>,
 
-	units: Vec<UnitData>,
-	index: FxHashMap<u64, u32>,
-	groups: Groups,
+	// This step's units come first, followed by what only enemy memory holds.
+	pub(super) units: Vec<UnitData>,
+	pub(super) current_units_count: usize,
+	pub(super) index: FxHashMap<u64, u32>,
+	pub(super) groups: Groups,
 	pub(super) abilities: FxHashMap<u64, FxHashSet<AbilityId>>,
 	pub(super) techlab_tags: FxHashSet<u64>,
 	pub(super) reactor_tags: FxHashSet<u64>,
 	pub(super) last_health: FxHashMap<u64, u32>,
 	pub(super) max_cooldowns: FxHashMap<UnitTypeId, f32>,
+	pub(super) available_frames: FxHashMap<u64, u32>,
 	// Remembered from step to step
-	hallucinations: FxHashSet<u64>,
-	owned_tags: FxHashSet<u64>,
-	under_construction: FxHashSet<u64>,
+	pub(super) hallucinations: FxHashSet<u64>,
+	pub(super) owned_tags: FxHashSet<u64>,
+	pub(super) under_construction: FxHashSet<u64>,
 }
 
 impl World {
@@ -141,19 +136,32 @@ impl World {
 			supply_cap: 0,
 			supply_used: 0,
 			supply_left: 0,
+			common: Default::default(),
 			enemy_race,
 			upgrades: Default::default(),
 			enemy_upgrades: Default::default(),
 			creep: Default::default(),
 			visibility: Default::default(),
 			effects: Default::default(),
+			radars: Default::default(),
+			psionic_matrix: Default::default(),
+			camera: Default::default(),
+			alerts: Default::default(),
+			available_abilities: Default::default(),
+			score: Default::default(),
+			chat: Default::default(),
+			actions: Default::default(),
+			action_errors: Default::default(),
 			dead_units: Default::default(),
 			expansions,
 			orders: Default::default(),
 			current_units: Default::default(),
 			enemies_ordered: Default::default(),
 			enemies_current: Default::default(),
+			remembered_ordered: Default::default(),
+			remembered_current: Default::default(),
 			units: Default::default(),
+			current_units_count: 0,
 			index: Default::default(),
 			groups: Default::default(),
 			abilities: Default::default(),
@@ -161,6 +169,7 @@ impl World {
 			reactor_tags: Default::default(),
 			last_health: Default::default(),
 			max_cooldowns: Default::default(),
+			available_frames: Default::default(),
 			hallucinations: Default::default(),
 			owned_tags: Default::default(),
 			under_construction: Default::default(),
@@ -169,7 +178,7 @@ impl World {
 
 	#[inline]
 	pub(super) fn unit_at(&self, id: u32) -> UnitRef<'_> {
-		UnitRef::new(&self.units[id as usize], self)
+		UnitRef::new(&self.units[id as usize], self, id)
 	}
 	#[inline]
 	pub(super) fn index_of(&self, tag: u64) -> Option<u32> {
@@ -178,6 +187,11 @@ impl World {
 	/// Finds any unit by tag. `None` means it's not in this step's observation.
 	pub fn unit(&self, tag: u64) -> Option<UnitRef<'_>> {
 		self.index_of(tag).map(|id| self.unit_at(id))
+	}
+	/// A group made of given units, for example the result of your own iterator chain.
+	pub fn units_from<'w>(&'w self, units: impl IntoIterator<Item = UnitRef<'w>>) -> Units<'w> {
+		let ids = units.into_iter().map(UnitRef::id).collect::<Vec<_>>();
+		Units::unordered(self, ids.into())
 	}
 	/// All units, including your own, enemy and neutral.
 	pub fn all(&self) -> Units<'_> {
@@ -188,6 +202,7 @@ impl World {
 		PlayerUnits {
 			world: self,
 			groups: &self.groups.my,
+			searchable: true,
 		}
 	}
 	/// Opponent's units.
@@ -195,6 +210,19 @@ impl World {
 		PlayerUnits {
 			world: self,
 			groups: &self.groups.enemy,
+			searchable: true,
+		}
+	}
+	/// Opponent's units, including ones seen on earlier steps that are probably still around:
+	/// out of vision, or thought to be burrowed. Their data is from when they were last seen.
+	///
+	/// Replaces the old `enemies_cache` feature, and is always available. Unlike that feature,
+	/// [`enemy`](Self::enemy) always reports exactly what SC2 said on this step.
+	pub fn enemy_memory(&self) -> PlayerUnits<'_> {
+		PlayerUnits {
+			world: self,
+			groups: &self.groups.memory,
+			searchable: false,
 		}
 	}
 	/// All mineral fields.
@@ -229,394 +257,266 @@ impl World {
 			.get(pos.into())
 			.map_or(0.0, |h| *h as f32 * 32.0 / 255.0 - 16.0)
 	}
-	/// Checks if given position is visible now.
-	pub fn is_visible<P: Into<(usize, usize)>>(&self, pos: P) -> bool {
-		self.visibility.get(pos.into()).map_or(false, |p| p.is_visible())
+	/// Terrain height on given position.
+	pub fn get_height<P: Into<(usize, usize)>>(&self, pos: P) -> u8 {
+		self.map
+			.game_info
+			.terrain_height
+			.get(pos.into())
+			.copied()
+			.unwrap_or(0)
+	}
+	/// Checks if it's possible to build on given position.
+	pub fn is_placeable<P: Into<(usize, usize)>>(&self, pos: P) -> bool {
+		self.map
+			.game_info
+			.placement_grid
+			.get(pos.into())
+			.map_or(false, |p| p.is_empty())
+	}
+	/// Checks if ground units can walk through given position.
+	pub fn is_pathable<P: Into<(usize, usize)>>(&self, pos: P) -> bool {
+		self.map
+			.game_info
+			.pathing_grid
+			.get(pos.into())
+			.map_or(false, |p| p.is_empty())
 	}
 	/// Checks if given position hasn't been explored yet.
 	pub fn is_hidden<P: Into<(usize, usize)>>(&self, pos: P) -> bool {
 		self.visibility.get(pos.into()).map_or(true, |p| p.is_hidden())
 	}
-}
-
-fn has_attribute(game_data: &GameData, type_id: UnitTypeId, attribute: Attribute) -> bool {
-	game_data
-		.units
-		.get(&type_id)
-		.map_or(false, |d| d.attributes.contains(&attribute))
-}
-
-/// `false` when a detector or scan within `gap` of the unit can see it.
-fn is_invisible(u: &UnitData, detectors: &[&UnitData], scans: &[&Effect], gap: f32) -> bool {
-	let additional = u.radius + gap;
-	!detectors.iter().any(|d| {
-		u.position
-			.is_closer(additional + d.radius + d.detect_range, d.position)
-	}) && !scans.iter().any(|scan| {
-		scan.positions
-			.iter()
-			.any(|p| u.position.is_closer(additional + scan.radius, *p))
-	})
-}
-
-/// Builds the next [`World`]. A pure function: it talks to nothing but its arguments,
-/// so it can be tested without running SC2.
-pub(super) fn build_world(
-	prev: &World,
-	response: &ResponseObservation,
-	abilities: FxHashMap<u64, FxHashSet<AbilityId>>,
-) -> (World, Vec<Event>) {
-	let map = Arc::clone(&prev.map);
-	let game_data = &map.game_data;
-	let obs = &response.observation;
-	let raw = &obs.raw_data;
-	let map_state = &raw.map_state;
-
-	let mut events = vec![];
-	let mut owned_tags = prev.owned_tags.clone();
-	let mut under_construction = prev.under_construction.clone();
-	let mut hallucinations = prev.hallucinations.clone();
-	let mut expansions = prev.expansions.clone();
-	let mut max_cooldowns = prev.max_cooldowns.clone();
-	let mut enemy_race = prev.enemy_race;
-
-	// Dead units
-	let dead_units = raw.event.dead_units.clone();
-	for u in &dead_units {
-		let alliance = if owned_tags.remove(u) {
-			under_construction.remove(u);
-			Some(Alliance::Own)
-		} else if hallucinations.remove(u) {
-			Some(Alliance::Enemy)
-		} else if expansions.iter_mut().any(|exp| exp.minerals.remove(u)) {
-			Some(Alliance::Neutral)
-		} else {
-			None
-		};
-		events.push(Event::UnitDestroyed(*u, alliance));
+	/// Checks if given position is in fog of war.
+	pub fn is_fogged<P: Into<(usize, usize)>>(&self, pos: P) -> bool {
+		self.visibility.get(pos.into()).map_or(true, |p| p.is_fogged())
+	}
+	/// Checks if given position is visible now.
+	pub fn is_visible<P: Into<(usize, usize)>>(&self, pos: P) -> bool {
+		self.visibility.get(pos.into()).map_or(false, |p| p.is_visible())
+	}
+	/// Checks if given position is fully hidden (only in campaign and custom maps).
+	pub fn is_full_hidden<P: Into<(usize, usize)>>(&self, pos: P) -> bool {
+		self.visibility
+			.get(pos.into())
+			.map_or(true, |p| p.is_full_hidden())
+	}
+	/// Checks if given position was explored before.
+	pub fn is_explored<P: Into<(usize, usize)>>(&self, pos: P) -> bool {
+		self.visibility.get(pos.into()).map_or(false, |p| p.is_explored())
+	}
+	/// Checks if given position has creep. In SC2's creep map a set bit means creep, and
+	/// the map parser turns set bits into `Pixel::Empty`, so `Empty` is what means creep here.
+	pub fn has_creep<P: Into<(usize, usize)>>(&self, pos: P) -> bool {
+		self.creep.get(pos.into()).map_or(false, |p| p.is_empty())
 	}
 
-	let effects = raw
-		.effects
-		.iter()
-		.map(|e| Effect {
-			id: {
-				let id = e.effect_id();
-				EffectId::from_u32(id).unwrap_or_else(|| panic!("There's no `EffectId` with value {}", id))
-			},
-			positions: e.pos.iter().map(Point2::from_proto).collect(),
-			alliance: Alliance::from_proto(e.alliance()),
-			owner: e.owner() as u32,
-			radius: e.radius(),
-		})
-		.collect::<Vec<_>>();
-
-	// Units. They're plain values here, so anything derived from
-	// other units is simply written before the world is put together.
-	let visibility = VisibilityMap::from_proto(map_state.visibility.get_or_default());
-	let mut units = raw
-		.units
-		.iter()
-		.map(|u| UnitData::from_proto(&visibility, u))
-		.collect::<Vec<_>>();
-
-	for u in &mut units {
-		if u.alliance.is_enemy() {
-			// Once flagged, a unit stays a hallucination, as in the old API
-			if u.is_hallucination {
-				hallucinations.insert(u.tag);
-			} else if hallucinations.contains(&u.tag) {
-				u.is_hallucination = true;
-			}
-		}
-	}
-
-	let revealed = {
-		let detectors = units
-			.iter()
-			.filter(|u| u.alliance.is_enemy() && u.is_detector())
-			.collect::<Vec<_>>();
-		let scans = effects
-			.iter()
-			.filter(|e| e.id == EffectId::ScannerSweep && e.alliance.is_enemy())
-			.collect::<Vec<_>>();
-		if detectors.is_empty() && scans.is_empty() {
-			vec![]
-		} else {
-			units
-				.iter()
-				.enumerate()
-				.filter(|(_, u)| {
-					u.alliance.is_mine() && !u.is_revealed && !is_invisible(u, &detectors, &scans, 1.0)
-				})
-				.map(|(i, _)| i)
-				.collect()
-		}
-	};
-	for i in revealed {
-		units[i].is_revealed = true;
-	}
-
-	// Sorting units into groups
-	let mut groups = Groups::default();
-	let mut index = FxHashMap::default();
-	let mut techlab_tags = FxHashSet::default();
-	let mut reactor_tags = FxHashSet::default();
-	let mut bases = FxHashMap::default();
-	let enemy_start_hidden = visibility
-		.get(<(usize, usize)>::from(map.enemy_start))
-		.map_or(true, |p| p.is_hidden());
-	if enemy_start_hidden {
-		bases.insert(map.enemy_start, (Alliance::Enemy, None));
-	}
-
-	for (i, u) in units.iter().enumerate() {
-		let id = i as u32;
-		index.insert(u.tag, id);
-		groups.all.push(id);
-		let is_structure = has_attribute(game_data, u.type_id, Attribute::Structure);
-
-		match u.alliance {
-			Alliance::Neutral => match u.type_id {
-				UnitTypeId::XelNagaTower => groups.watchtowers.push(id),
-				UnitTypeId::RichMineralField
-				| UnitTypeId::RichMineralField750
-				| UnitTypeId::MineralField
-				| UnitTypeId::MineralField450
-				| UnitTypeId::MineralField750
-				| UnitTypeId::LabMineralField
-				| UnitTypeId::LabMineralField750
-				| UnitTypeId::PurifierRichMineralField
-				| UnitTypeId::PurifierRichMineralField750
-				| UnitTypeId::PurifierMineralField
-				| UnitTypeId::PurifierMineralField750
-				| UnitTypeId::BattleStationMineralField
-				| UnitTypeId::BattleStationMineralField750
-				| UnitTypeId::MineralFieldOpaque
-				| UnitTypeId::MineralFieldOpaque900 => {
-					groups.resources.push(id);
-					groups.mineral_fields.push(id);
-				}
-				UnitTypeId::VespeneGeyser
-				| UnitTypeId::SpacePlatformGeyser
-				| UnitTypeId::RichVespeneGeyser
-				| UnitTypeId::ProtossVespeneGeyser
-				| UnitTypeId::PurifierVespeneGeyser
-				| UnitTypeId::ShakurasVespeneGeyser => {
-					groups.resources.push(id);
-					groups.vespene_geysers.push(id);
-				}
-				type_id if INHIBITOR_IDS.contains(&type_id) => groups.inhibitor_zones.push(id),
-				_ => groups.destructables.push(id),
-			},
-			Alliance::Own | Alliance::Enemy => {
-				let is_mine = u.alliance.is_mine();
-				if is_mine {
-					if let Some(cooldown) = u.weapon_cooldown {
-						max_cooldowns
-							.entry(u.type_id)
-							.and_modify(|max| *max = cooldown.max(*max))
-							.or_insert(cooldown);
-					}
-				}
-
-				let group = if is_mine {
-					&mut groups.my
-				} else {
-					&mut groups.enemy
-				};
-				group.all.push(id);
-				if !is_structure {
-					group.units.push(id);
-					match u.type_id {
-						UnitTypeId::SCV | UnitTypeId::Probe | UnitTypeId::Drone => group.workers.push(id),
-						UnitTypeId::Larva => group.larvas.push(id),
-						_ => {}
-					}
-				} else if is_mine && u.display_type.is_placeholder() {
-					group.placeholders.push(id);
-				} else {
-					group.structures.push(id);
-					match u.type_id {
-						UnitTypeId::CommandCenter
-						| UnitTypeId::OrbitalCommand
-						| UnitTypeId::PlanetaryFortress
-						| UnitTypeId::Hatchery
-						| UnitTypeId::Lair
-						| UnitTypeId::Hive
-						| UnitTypeId::Nexus => {
-							bases.insert(u.position, (u.alliance, Some(u.tag)));
-							group.townhalls.push(id);
-						}
-						UnitTypeId::CommandCenterFlying | UnitTypeId::OrbitalCommandFlying => {
-							group.townhalls.push(id)
-						}
-						UnitTypeId::Refinery
-						| UnitTypeId::RefineryRich
-						| UnitTypeId::Assimilator
-						| UnitTypeId::AssimilatorRich
-						| UnitTypeId::Extractor
-						| UnitTypeId::ExtractorRich => group.gas_buildings.push(id),
-						UnitTypeId::TechLab
-						| UnitTypeId::BarracksTechLab
-						| UnitTypeId::FactoryTechLab
-						| UnitTypeId::StarportTechLab
-							if is_mine =>
-						{
-							techlab_tags.insert(u.tag);
-						}
-						UnitTypeId::Reactor
-						| UnitTypeId::BarracksReactor
-						| UnitTypeId::FactoryReactor
-						| UnitTypeId::StarportReactor
-							if is_mine =>
-						{
-							reactor_tags.insert(u.tag);
-						}
-						_ => {}
-					}
-				}
-			}
-			_ => {}
-		}
-	}
-
-	for exp in &mut expansions {
-		let (alliance, base) = bases.remove(&exp.loc).unwrap_or((Alliance::Neutral, None));
-		exp.alliance = alliance;
-		exp.base = base;
-	}
-
-	// Counters
-	let mut orders = FxHashMap::default();
-	let mut current_units = FxHashMap::default();
-	let mut constructed = FxHashMap::default();
-	for &id in &groups.my.all {
-		let u = &units[id as usize];
-		if u.is_hallucination {
-			continue;
-		}
-		for order in &u.orders {
-			if order.ability.is_constructing() {
-				if let Target::Pos(pos) = order.target {
-					constructed.insert((pos, order.ability), false);
-				}
-			}
-			*orders.entry(order.ability).or_default() += 1;
-		}
-		if u.is_ready() {
-			*current_units.entry(u.type_id).or_default() += 1;
-		} else if let Some(ability) = game_data.units.get(&u.type_id).and_then(|d| d.ability) {
-			constructed.entry((u.position, ability)).or_insert(true);
-		}
-	}
-	for ((_, ability), standalone) in constructed {
-		if standalone {
-			*orders.entry(ability).or_default() += 1;
-		}
-	}
-
-	let mut enemies_ordered = FxHashMap::default();
-	let mut enemies_current = FxHashMap::default();
-	for &id in &groups.enemy.all {
-		let u = &units[id as usize];
-		if has_attribute(game_data, u.type_id, Attribute::Structure) {
-			let counter = if u.is_ready() {
-				&mut enemies_current
-			} else {
-				&mut enemies_ordered
-			};
-			*counter.entry(u.type_id).or_default() += 1;
-		} else if !u.is_hallucination {
-			*enemies_current.entry(u.type_id).or_default() += 1;
-		}
-	}
-
-	// Events
-	for &id in &groups.my.all {
-		let u = &units[id as usize];
-		let is_structure = has_attribute(game_data, u.type_id, Attribute::Structure);
-		if owned_tags.insert(u.tag) {
-			if !is_structure {
-				events.push(Event::UnitCreated(u.tag));
-			} else if !(u.display_type.is_placeholder() || u.type_id == UnitTypeId::KD8Charge) {
-				if u.is_ready() {
-					events.push(Event::ConstructionComplete(u.tag));
-				} else {
-					events.push(Event::ConstructionStarted(u.tag));
-					under_construction.insert(u.tag);
-				}
-			}
-		} else if u.is_ready() && under_construction.remove(&u.tag) {
-			events.push(Event::ConstructionComplete(u.tag));
-		}
-	}
-	if enemy_race.is_random() {
-		let detected = groups
-			.enemy
-			.all
-			.iter()
-			.filter_map(|&id| game_data.units.get(&units[id as usize].type_id))
-			.map(|d| d.race)
-			.find(|r| !r.is_random());
-		if let Some(race) = detected {
-			events.push(Event::RandomRaceDetected(race));
-			enemy_race = race;
-		}
-	}
-
-	let common = &obs.player_common;
-	let game_loop = obs.game_loop();
-	let world = World {
-		game_loop,
-		game_step: prev.game_step,
-		time: game_loop as f32 / FRAMES_PER_SECOND,
-		minerals: common.minerals(),
-		vespene: common.vespene(),
-		supply_army: common.food_army(),
-		supply_workers: common.food_workers(),
-		supply_cap: common.food_cap(),
-		supply_used: common.food_used(),
-		supply_left: common.food_cap().saturating_sub(common.food_used()),
-		enemy_race,
-		upgrades: raw
-			.player
-			.upgrade_ids
-			.iter()
-			.map(|u| {
-				UpgradeId::from_u32(*u).unwrap_or_else(|| panic!("There's no `UpgradeId` with value {}", u))
-			})
-			.collect(),
-		enemy_upgrades: prev.enemy_upgrades.clone(),
-		creep: PixelMap::from_proto(&map_state.creep.get_or_default()),
-		visibility,
-		effects,
-		dead_units,
-		expansions,
-		orders,
-		current_units,
-		enemies_ordered,
-		enemies_current,
-		last_health: prev
+	/// Full cost of given unit type, without any corrections.
+	pub fn get_unit_api_cost(&self, unit: UnitTypeId) -> Cost {
+		self.map
+			.game_data
 			.units
+			.get(&unit)
+			.map_or_else(Cost::default, |d| d.cost())
+	}
+	/// Correct cost of building given unit type.
+	pub fn get_unit_cost(&self, unit: UnitTypeId) -> Cost {
+		let mut cost = self.get_unit_api_cost(unit);
+		match unit {
+			UnitTypeId::OverlordTransport => {
+				cost.minerals = 25;
+				cost.vespene = 25;
+			}
+			UnitTypeId::Zergling | UnitTypeId::ZerglingBurrowed => {
+				cost.minerals *= 2;
+				cost.supply *= 2.0;
+			}
+			_ => {
+				let pred = self.get_unit_api_cost(match unit {
+					UnitTypeId::Baneling | UnitTypeId::BanelingBurrowed => UnitTypeId::Zergling,
+					UnitTypeId::Ravager | UnitTypeId::RavagerBurrowed => UnitTypeId::Roach,
+					UnitTypeId::LurkerMP | UnitTypeId::LurkerMPBurrowed => UnitTypeId::Hydralisk,
+					UnitTypeId::Overseer | UnitTypeId::OverseerSiegeMode => UnitTypeId::Overlord,
+					UnitTypeId::BroodLord => UnitTypeId::Corruptor,
+					UnitTypeId::OrbitalCommand
+					| UnitTypeId::OrbitalCommandFlying
+					| UnitTypeId::PlanetaryFortress => UnitTypeId::CommandCenter,
+					UnitTypeId::Lair => UnitTypeId::Hatchery,
+					UnitTypeId::Hive => UnitTypeId::Lair,
+					UnitTypeId::GreaterSpire => UnitTypeId::Spire,
+					UnitTypeId::Hatchery
+					| UnitTypeId::SpineCrawler
+					| UnitTypeId::SporeCrawler
+					| UnitTypeId::Extractor
+					| UnitTypeId::SpawningPool
+					| UnitTypeId::EvolutionChamber
+					| UnitTypeId::RoachWarren
+					| UnitTypeId::BanelingNest
+					| UnitTypeId::HydraliskDen
+					| UnitTypeId::LurkerDenMP
+					| UnitTypeId::InfestationPit
+					| UnitTypeId::Spire
+					| UnitTypeId::NydusNetwork
+					| UnitTypeId::UltraliskCavern => UnitTypeId::Drone,
+					_ => return cost,
+				});
+				cost.minerals -= pred.minerals;
+				cost.vespene -= pred.vespene;
+				cost.supply = (cost.supply - pred.supply).max(0.0);
+			}
+		}
+		cost
+	}
+	/// Cost of given upgrade.
+	pub fn get_upgrade_cost(&self, upgrade: UpgradeId) -> Cost {
+		self.map
+			.game_data
+			.upgrades
+			.get(&upgrade)
+			.map_or_else(Default::default, |d| d.cost())
+	}
+	/// Checks if given upgrade is complete.
+	pub fn has_upgrade(&self, upgrade: UpgradeId) -> bool {
+		self.upgrades.contains(&upgrade)
+	}
+	/// Checks if an enemy upgrade was noted with [`Commands`](super::Commands).
+	pub fn enemy_has_upgrade(&self, upgrade: UpgradeId) -> bool {
+		self.enemy_upgrades.contains(&upgrade)
+	}
+	/// Checks if given upgrade is in progress.
+	pub fn is_ordered_upgrade(&self, upgrade: UpgradeId) -> bool {
+		let ability = self.map.game_data.upgrades.get(&upgrade).map(|d| d.ability);
+		ability.map_or(false, |a| self.orders.get(&a).map_or(false, |count| *count > 0))
+	}
+	/// Progress of given upgrade: `1` when complete, `0` when not ordered.
+	pub fn upgrade_progress(&self, upgrade: UpgradeId) -> f32 {
+		if self.has_upgrade(upgrade) {
+			return 1.0;
+		}
+		if !self.is_ordered_upgrade(upgrade) {
+			return 0.0;
+		}
+		let ability = self.map.game_data.upgrades[&upgrade].ability;
+		self.my()
+			.structures()
 			.iter()
-			.filter_map(|u| Some((u.tag, u.hits()?)))
-			.collect(),
-		units,
-		index,
-		groups,
-		abilities,
-		techlab_tags,
-		reactor_tags,
-		max_cooldowns,
-		hallucinations,
-		owned_tags,
-		under_construction,
-		map,
-	};
-	(world, events)
+			.filter(|s| s.is_ready())
+			.find_map(|s| s.orders.iter().find(|o| o.ability == ability).map(|o| o.progress))
+			.unwrap_or(0.0)
+	}
+	/// Next free expansion closest to your start location.
+	pub fn get_expansion(&self) -> Option<&Expansion> {
+		self.free_expansions().next()
+	}
+	/// Expansions taken by you.
+	pub fn owned_expansions(&self) -> impl Iterator<Item = &Expansion> {
+		self.expansions.iter().filter(|exp| exp.alliance.is_mine())
+	}
+	/// Expansions taken by the opponent.
+	pub fn enemy_expansions(&self) -> impl Iterator<Item = &Expansion> {
+		self.expansions.iter().filter(|exp| exp.alliance.is_enemy())
+	}
+	/// Free expansions.
+	pub fn free_expansions(&self) -> impl Iterator<Item = &Expansion> {
+		self.expansions.iter().filter(|exp| exp.alliance.is_neutral())
+	}
+	/// Counts your units. Ready ones of exactly the given type by default.
+	pub fn counter(&self) -> CountOptions<'_> {
+		CountOptions::new(self, CountSource::Mine)
+	}
+	/// Counts enemy units seen on this step.
+	pub fn enemy_counter(&self) -> CountOptions<'_> {
+		CountOptions::new(self, CountSource::Enemy)
+	}
+	/// Counts enemy units in [`enemy_memory`](Self::enemy_memory).
+	pub fn remembered_counter(&self) -> CountOptions<'_> {
+		CountOptions::new(self, CountSource::Remembered)
+	}
 }
 
-#[cfg(test)]
-#[path = "tests.rs"]
-mod tests;
+#[derive(Clone, Copy)]
+enum CountSource {
+	Mine,
+	Enemy,
+	Remembered,
+}
+
+/// Which units to count. Made with [`World::counter`] and its siblings.
+#[derive(Clone, Copy)]
+pub struct CountOptions<'w> {
+	world: &'w World,
+	source: CountSource,
+	completion: Completion,
+	alias: UnitAlias,
+}
+
+impl<'w> CountOptions<'w> {
+	fn new(world: &'w World, source: CountSource) -> Self {
+		Self {
+			world,
+			source,
+			completion: Completion::Complete,
+			alias: UnitAlias::None,
+		}
+	}
+	/// Count only units in progress.
+	pub fn ordered(mut self) -> Self {
+		self.completion = Completion::Ordered;
+		self
+	}
+	/// Count both complete units and units in progress.
+	pub fn all(mut self) -> Self {
+		self.completion = Completion::All;
+		self
+	}
+	/// Also count the other form of units that have 2 forms.
+	pub fn alias(mut self) -> Self {
+		self.alias = UnitAlias::Unit;
+		self
+	}
+	/// Also count other forms of units that have more than 2, usually structures.
+	pub fn tech(mut self) -> Self {
+		self.alias = UnitAlias::Tech;
+		self
+	}
+	fn ready(self, id: UnitTypeId) -> usize {
+		let counts = match self.source {
+			CountSource::Mine => &self.world.current_units,
+			CountSource::Enemy => &self.world.enemies_current,
+			CountSource::Remembered => &self.world.remembered_current,
+		};
+		counts.get(&id).copied().unwrap_or(0)
+	}
+	fn in_progress(self, id: UnitTypeId) -> usize {
+		let world = self.world;
+		match self.source {
+			CountSource::Mine => world
+				.map
+				.game_data
+				.units
+				.get(&id)
+				.and_then(|d| d.ability)
+				.and_then(|ability| world.orders.get(&ability).copied())
+				.unwrap_or(0),
+			CountSource::Enemy => world.enemies_ordered.get(&id).copied().unwrap_or(0),
+			CountSource::Remembered => world.remembered_ordered.get(&id).copied().unwrap_or(0),
+		}
+	}
+	fn count_one(self, id: UnitTypeId) -> usize {
+		match self.completion {
+			Completion::Complete => self.ready(id),
+			Completion::Ordered => self.in_progress(id),
+			Completion::All => self.ready(id) + self.in_progress(id),
+		}
+	}
+	/// Counts units of given type.
+	pub fn count(self, id: UnitTypeId) -> usize {
+		self.count_one(id)
+			+ match self.alias {
+				UnitAlias::None => 0,
+				UnitAlias::Unit => UNIT_ALIAS.get(&id).map_or(0, |alias| self.count_one(*alias)),
+				UnitAlias::Tech => TECH_ALIAS
+					.get(&id)
+					.map_or(0, |alias| alias.iter().map(|a| self.count_one(*a)).sum()),
+			}
+	}
+}

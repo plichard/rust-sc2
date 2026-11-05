@@ -387,8 +387,8 @@ impl Error for ProtoError {}
 
 pub(crate) struct Ports {
 	// shared: i32,
-	server: (i32, i32),
-	client: Vec<(i32, i32)>,
+	pub(crate) server: (i32, i32),
+	pub(crate) client: Vec<(i32, i32)>,
 }
 
 /// Additional launch options for [`run_vs_computer`] and [`run_vs_human`].
@@ -500,7 +500,7 @@ pub(crate) fn get_unused_port() -> i32 {
 		.unwrap() as i32
 }
 
-fn get_unused_ports(n: usize) -> Vec<i32> {
+pub(crate) fn get_unused_ports(n: usize) -> Vec<i32> {
 	let mut ports = Vec::with_capacity(n);
 	for port in 5000..65535 {
 		if TcpListener::bind((HOST, port)).is_ok() {
@@ -514,7 +514,7 @@ fn get_unused_ports(n: usize) -> Vec<i32> {
 }
 
 // Helpers
-pub(crate) fn set_static_data(bot: &mut Bot) -> SC2Result<()> {
+fn set_static_data(bot: &mut Bot) -> SC2Result<()> {
 	let api = bot.api();
 
 	debug!("Requesting GameInfo");
@@ -567,7 +567,7 @@ pub(crate) fn join_game(settings: &PlayerSettings, api: &API, ports: Option<&Por
 	join_game2(settings, api, ports)?;
 	wait_join(api)
 }
-fn join_game2(settings: &PlayerSettings, api: &API, ports: Option<&Ports>) -> SC2Result<()> {
+pub(crate) fn join_game2(settings: &PlayerSettings, api: &API, ports: Option<&Ports>) -> SC2Result<()> {
 	let mut req = Request::new();
 	let req_join_game = req.mut_join_game();
 
@@ -606,7 +606,7 @@ fn join_game2(settings: &PlayerSettings, api: &API, ports: Option<&Ports>) -> SC
 	api.send_only(req)?;
 	Ok(())
 }
-fn wait_join(api: &API) -> SC2Result<u32> {
+pub(crate) fn wait_join(api: &API) -> SC2Result<u32> {
 	let res = api.wait_response()?;
 
 	let res_join_game = res.join_game();

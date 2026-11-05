@@ -1,21 +1,40 @@
 use super::World;
 use crate::{
 	action::Target,
-	consts::{MISSED_WEAPONS, OFF_CREEP_SPEED_UPGRADES, SPEED_BUFFS, SPEED_ON_CREEP, SPEED_UPGRADES},
-	distance::Distance,
-	game_data::{Attribute, UnitTypeData, Weapon},
+	consts::{FRAMES_PER_SECOND, OFF_CREEP_SPEED_UPGRADES, SPEED_BUFFS, SPEED_ON_CREEP, SPEED_UPGRADES},
+	game_data::{Attribute, Cost, UnitTypeData},
 	game_state::Alliance,
 	geometry::{Point2, Point3},
 	ids::{AbilityId, BuffId, UnitTypeId, UpgradeId},
 	pixel_map::VisibilityMap,
 	player::Race,
-	unit::{DisplayType, PassengerUnit, RallyTarget, UnitOrder},
+	unit::{DisplayType, PassengerUnit, Radius, RallyTarget, UnitOrder},
+	units::Container,
 	FromProto,
 };
 use num_traits::FromPrimitive;
+use once_cell::sync::Lazy;
 use rustc_hash::FxHashSet;
 use sc2_proto::raw::{unit_order::Target as ProtoTarget, CloakState as ProtoCloakState, Unit as ProtoUnit};
-use std::ops::Deref;
+use std::{ops::Deref, sync::Mutex};
+
+/// Returns `parsed`, warning once per id when SC2 sent something this library doesn't know.
+///
+/// IDs are generated from one game version, so a newer client can report ones missing from
+/// the tables. That shouldn't end a game, so unknown ones are skipped. Run `generate_ids.py`
+/// against your client to bring the tables up to date.
+pub(super) fn known<T>(kind: &'static str, id: i64, parsed: Option<T>) -> Option<T> {
+	static WARNED: Lazy<Mutex<FxHashSet<(&'static str, i64)>>> = Lazy::new(Default::default);
+	if parsed.is_none() {
+		let first_time = WARNED
+			.lock()
+			.map_or(false, |mut warned| warned.insert((kind, id)));
+		if first_time {
+			warn!("SC2 reported an unknown {} with id {}, ignoring it", kind, id);
+		}
+	}
+	parsed
+}
 
 /// What SC2 reported about a unit on one step: plain data with public fields.
 ///
@@ -75,13 +94,15 @@ pub struct UnitData {
 }
 
 impl UnitData {
-	pub(super) fn from_proto(visibility: &VisibilityMap, u: &ProtoUnit) -> Self {
+	/// `None` if SC2 reports a unit type this version of the library doesn't know.
+	pub(super) fn from_proto(visibility: &VisibilityMap, u: &ProtoUnit) -> Option<Self> {
 		let pos = u.pos.get_or_default();
 		let position = Point2::from_proto(pos);
-		let type_id = {
-			let id = u.unit_type();
-			UnitTypeId::from_u32(id).unwrap_or_else(|| panic!("There's no `UnitTypeId` with value {}", id))
-		};
+		let type_id = known(
+			"unit type",
+			u.unit_type() as i64,
+			UnitTypeId::from_u32(u.unit_type()),
+		)?;
 		let is_burrowed = u.is_burrowed();
 		let (is_cloaked, is_revealed) = if is_burrowed {
 			(true, false)
@@ -92,7 +113,7 @@ impl UnitData {
 				ProtoCloakState::CloakedDetected => (true, true),
 			}
 		};
-		Self {
+		Some(Self {
 			tag: u.tag(),
 			type_id,
 			alliance: Alliance::from_proto(u.alliance()),
@@ -120,9 +141,7 @@ impl UnitData {
 			buffs: u
 				.buff_ids
 				.iter()
-				.map(|b| {
-					BuffId::from_u32(*b).unwrap_or_else(|| panic!("There's no `BuffId` with value {}", b))
-				})
+				.filter_map(|b| known("buff", *b as i64, BuffId::from_u32(*b)))
 				.collect(),
 			detect_range: match type_id {
 				UnitTypeId::Observer => 11.0,
@@ -153,16 +172,17 @@ impl UnitData {
 				.orders
 				.iter()
 				.map(|order| UnitOrder {
-					ability: {
-						let id = order.ability_id();
-						AbilityId::from_u32(id)
-							.unwrap_or_else(|| panic!("There's no `AbilityId` with value {}", id))
-					},
+					// Dropping an unknown order would make a busy unit look idle
+					ability: known(
+						"ability",
+						order.ability_id() as i64,
+						AbilityId::from_u32(order.ability_id()),
+					)
+					.unwrap_or(AbilityId::NullNull),
 					target: match &order.target {
 						Some(ProtoTarget::TargetWorldSpacePos(pos)) => Target::Pos(Point2::from_proto(pos)),
 						Some(ProtoTarget::TargetUnitTag(tag)) => Target::Tag(*tag),
-						Some(_) => panic!("Unhandled target"),
-						None => Target::None,
+						_ => Target::None,
 					},
 					progress: order.progress(),
 				})
@@ -171,19 +191,21 @@ impl UnitData {
 			passengers: u
 				.passengers
 				.iter()
-				.map(|p| PassengerUnit {
-					tag: p.tag(),
-					health: p.health(),
-					health_max: p.health_max(),
-					shield: p.shield(),
-					shield_max: p.shield_max(),
-					energy: p.energy(),
-					energy_max: p.energy_max(),
-					type_id: {
-						let id = p.unit_type();
-						UnitTypeId::from_u32(id)
-							.unwrap_or_else(|| panic!("There's no `UnitTypeId` with value {}", id))
-					},
+				.filter_map(|p| {
+					Some(PassengerUnit {
+						tag: p.tag(),
+						health: p.health(),
+						health_max: p.health_max(),
+						shield: p.shield(),
+						shield_max: p.shield_max(),
+						energy: p.energy(),
+						energy_max: p.energy_max(),
+						type_id: known(
+							"unit type",
+							p.unit_type() as i64,
+							UnitTypeId::from_u32(p.unit_type()),
+						)?,
+					})
 				})
 				.collect(),
 			cargo_space_taken: u.cargo_space_taken.map(|x| x as u32),
@@ -202,17 +224,32 @@ impl UnitData {
 					tag: t.tag,
 				})
 				.collect(),
-		}
+		})
 	}
 
 	/// Summed health and shield. Not populated for snapshots.
 	pub fn hits(&self) -> Option<u32> {
-		match (self.health, self.shield) {
-			(Some(health), Some(shield)) => Some(health + shield),
-			(Some(health), None) => Some(health),
-			(None, Some(shield)) => Some(shield),
-			(None, None) => None,
-		}
+		sum_options(self.health, self.shield)
+	}
+	/// Summed maximum health and shield. Not populated for snapshots.
+	pub fn hits_max(&self) -> Option<u32> {
+		sum_options(self.health_max, self.shield_max)
+	}
+	/// Current health divided by maximum health.
+	pub fn health_percentage(&self) -> Option<f32> {
+		percentage(self.health, self.health_max)
+	}
+	/// Current shield divided by maximum shield.
+	pub fn shield_percentage(&self) -> Option<f32> {
+		percentage(self.shield, self.shield_max)
+	}
+	/// Current energy divided by maximum energy.
+	pub fn energy_percentage(&self) -> Option<f32> {
+		percentage(self.energy, self.energy_max)
+	}
+	/// Current hits divided by maximum hits.
+	pub fn hits_percentage(&self) -> Option<f32> {
+		percentage(self.hits(), self.hits_max())
 	}
 	/// Checks if unit is yours.
 	pub fn is_mine(&self) -> bool {
@@ -222,6 +259,30 @@ impl UnitData {
 	pub fn is_enemy(&self) -> bool {
 		self.alliance.is_enemy()
 	}
+	/// Checks if unit is neutral.
+	pub fn is_neutral(&self) -> bool {
+		self.alliance.is_neutral()
+	}
+	/// Checks if unit is an ally's.
+	pub fn is_ally(&self) -> bool {
+		self.alliance.is_ally()
+	}
+	/// Checks if unit is a worker.
+	pub fn is_worker(&self) -> bool {
+		self.type_id.is_worker()
+	}
+	/// Checks if unit is a townhall.
+	pub fn is_townhall(&self) -> bool {
+		self.type_id.is_townhall()
+	}
+	/// Checks if unit is an addon.
+	pub fn is_addon(&self) -> bool {
+		self.type_id.is_addon()
+	}
+	/// Checks if unit is a melee attacker.
+	pub fn is_melee(&self) -> bool {
+		self.type_id.is_melee()
+	}
 	/// Building construction is complete.
 	pub fn is_ready(&self) -> bool {
 		(self.build_progress - 1.0).abs() < f32::EPSILON
@@ -230,9 +291,73 @@ impl UnitData {
 	pub fn is_almost_ready(&self) -> bool {
 		self.build_progress >= 0.95
 	}
+	/// Terran building has an addon.
+	pub fn has_addon(&self) -> bool {
+		self.addon_tag.is_some()
+	}
+	/// Some units are inside this transport or bunker.
+	pub fn has_cargo(&self) -> bool {
+		self.cargo_space_taken.map_or(false, |taken| taken > 0)
+	}
+	/// Free space in this transport or bunker.
+	pub fn cargo_left(&self) -> Option<u32> {
+		Some(self.cargo_space_max? - self.cargo_space_taken?)
+	}
+	/// Point at given distance in the direction unit is facing.
+	pub fn towards_facing(&self, offset: f32) -> Point2 {
+		self.position
+			.offset(offset * self.facing.cos(), offset * self.facing.sin())
+	}
 	/// Unit is fully visible.
 	pub fn is_visible(&self) -> bool {
 		self.display_type.is_visible()
+	}
+	/// Unit is a snapshot (hidden in fog of war or on high ground).
+	pub fn is_snapshot(&self) -> bool {
+		self.display_type.is_snapshot()
+	}
+	/// Unit is fully hidden.
+	pub fn is_hidden(&self) -> bool {
+		self.display_type.is_hidden()
+	}
+	/// Unit is a building placeholder.
+	pub fn is_placeholder(&self) -> bool {
+		self.display_type.is_placeholder()
+	}
+	/// Unit is detected or not even cloaked.
+	pub fn can_be_attacked(&self) -> bool {
+		self.is_revealed || !self.is_cloaked
+	}
+	/// Unit is cloaked or burrowed and not detected, so it must be detected to be attacked.
+	pub fn is_invisible(&self) -> bool {
+		self.is_cloaked && !self.is_revealed
+	}
+	/// Checks if unit has given buff.
+	pub fn has_buff(&self, buff: BuffId) -> bool {
+		self.buffs.contains(&buff)
+	}
+	/// Checks if unit has any of given buffs.
+	pub fn has_any_buff<'a, B: IntoIterator<Item = &'a BuffId>>(&self, buffs: B) -> bool {
+		buffs.into_iter().any(|b| self.buffs.contains(b))
+	}
+	/// Worker is carrying minerals.
+	pub fn is_carrying_minerals(&self) -> bool {
+		self.has_any_buff(&[
+			BuffId::CarryMineralFieldMinerals,
+			BuffId::CarryHighYieldMineralFieldMinerals,
+		])
+	}
+	/// Worker is carrying gas. SC2 doesn't report gas from rich geysers.
+	pub fn is_carrying_vespene(&self) -> bool {
+		self.has_any_buff(&[
+			BuffId::CarryHarvestableVespeneGeyserGas,
+			BuffId::CarryHarvestableVespeneGeyserGasProtoss,
+			BuffId::CarryHarvestableVespeneGeyserGasZerg,
+		])
+	}
+	/// Worker is carrying any resource.
+	pub fn is_carrying_resource(&self) -> bool {
+		self.is_carrying_minerals() || self.is_carrying_vespene()
 	}
 	/// Checks if unit's weapon is on cooldown.
 	pub fn on_cooldown(&self) -> bool {
@@ -251,17 +376,205 @@ impl UnitData {
 			&& (matches!(self.type_id, UnitTypeId::MissileTurret | UnitTypeId::SporeCrawler)
 				|| (self.type_id == UnitTypeId::PhotonCannon && self.is_powered)))
 	}
+
+	// Orders. These don't work with enemies, as SC2 doesn't report their orders.
+
+	/// Ability, target and progress of the current order.
+	pub fn order(&self) -> Option<(AbilityId, Target, f32)> {
+		self.orders.first().map(|o| (o.ability, o.target, o.progress))
+	}
+	/// Target of the current order.
+	pub fn target(&self) -> Target {
+		self.orders.first().map_or(Target::None, |o| o.target)
+	}
+	/// Target position of the current order.
+	pub fn tarpos(&self) -> Option<Point2> {
+		match self.target() {
+			Target::Pos(pos) => Some(pos),
+			_ => None,
+		}
+	}
+	/// Target tag of the current order.
+	pub fn tartag(&self) -> Option<u64> {
+		match self.target() {
+			Target::Tag(tag) => Some(tag),
+			_ => None,
+		}
+	}
+	/// Ability of the current order.
+	pub fn ordered_ability(&self) -> Option<AbilityId> {
+		self.orders.first().map(|o| o.ability)
+	}
+	/// Unit has no orders.
+	pub fn is_idle(&self) -> bool {
+		self.orders.is_empty()
+	}
+	/// Unit has no orders, or its only order is more than 95% complete.
+	pub fn is_almost_idle(&self) -> bool {
+		self.is_idle() || (self.orders.len() == 1 && self.orders[0].progress >= 0.95)
+	}
+	/// Unit is using given ability.
+	pub fn is_using(&self, ability: AbilityId) -> bool {
+		self.ordered_ability() == Some(ability)
+	}
+	/// Unit is using any of given abilities.
+	pub fn is_using_any<A: Container<AbilityId>>(&self, abilities: &A) -> bool {
+		self.ordered_ability().map_or(false, |a| abilities.contains(&a))
+	}
+	/// Unit is attacking.
+	pub fn is_attacking(&self) -> bool {
+		matches!(
+			self.ordered_ability(),
+			Some(
+				AbilityId::Attack
+					| AbilityId::AttackAttack
+					| AbilityId::AttackAttackTowards
+					| AbilityId::AttackAttackBarrage
+					| AbilityId::ScanMove
+			)
+		)
+	}
+	/// Unit is moving.
+	pub fn is_moving(&self) -> bool {
+		self.is_using(AbilityId::MoveMove)
+	}
+	/// Unit is patrolling.
+	pub fn is_patrolling(&self) -> bool {
+		self.is_using(AbilityId::Patrol)
+	}
+	/// SCV or MULE is repairing.
+	pub fn is_repairing(&self) -> bool {
+		matches!(
+			self.ordered_ability(),
+			Some(AbilityId::EffectRepairSCV | AbilityId::EffectRepairMule)
+		)
+	}
+	/// Worker is gathering a resource.
+	pub fn is_gathering(&self) -> bool {
+		matches!(
+			self.ordered_ability(),
+			Some(
+				AbilityId::HarvestGatherSCV
+					| AbilityId::HarvestGatherMule
+					| AbilityId::HarvestGatherDrone
+					| AbilityId::HarvestGatherProbe
+			)
+		)
+	}
+	/// Worker is returning a resource to the closest base.
+	pub fn is_returning(&self) -> bool {
+		matches!(
+			self.ordered_ability(),
+			Some(
+				AbilityId::HarvestReturnSCV
+					| AbilityId::HarvestReturnMule
+					| AbilityId::HarvestReturnDrone
+					| AbilityId::HarvestReturnProbe
+			)
+		)
+	}
+	/// Worker is gathering or returning resources.
+	pub fn is_collecting(&self) -> bool {
+		self.ordered_ability()
+			.map_or(false, |ability| match self.type_id {
+				UnitTypeId::SCV => {
+					matches!(ability, AbilityId::HarvestGatherSCV | AbilityId::HarvestReturnSCV)
+				}
+				UnitTypeId::MULE => matches!(
+					ability,
+					AbilityId::HarvestGatherMule | AbilityId::HarvestReturnMule
+				),
+				UnitTypeId::Drone => matches!(
+					ability,
+					AbilityId::HarvestGatherDrone | AbilityId::HarvestReturnDrone
+				),
+				UnitTypeId::Probe => matches!(
+					ability,
+					AbilityId::HarvestGatherProbe | AbilityId::HarvestReturnProbe
+				),
+				_ => false,
+			})
+	}
+	/// Worker is constructing a building.
+	pub fn is_constructing(&self) -> bool {
+		self.ordered_ability()
+			.map_or(false, |ability| match self.type_id {
+				UnitTypeId::SCV => ability.is_constructing_scv(),
+				UnitTypeId::Drone => ability.is_constructing_drone(),
+				UnitTypeId::Probe => ability.is_constructing_probe(),
+				_ => false,
+			})
+	}
+	/// Terran building is making an addon.
+	pub fn is_making_addon(&self) -> bool {
+		self.ordered_ability()
+			.map_or(false, |ability| match self.type_id {
+				UnitTypeId::Barracks => matches!(
+					ability,
+					AbilityId::BuildTechLabBarracks | AbilityId::BuildReactorBarracks
+				),
+				UnitTypeId::Factory => matches!(
+					ability,
+					AbilityId::BuildTechLabFactory | AbilityId::BuildReactorFactory
+				),
+				UnitTypeId::Starport => matches!(
+					ability,
+					AbilityId::BuildTechLabStarport | AbilityId::BuildReactorStarport
+				),
+				_ => false,
+			})
+	}
+	/// Terran building is making a techlab.
+	pub fn is_making_techlab(&self) -> bool {
+		matches!(
+			self.ordered_ability(),
+			Some(
+				AbilityId::BuildTechLabBarracks
+					| AbilityId::BuildTechLabFactory
+					| AbilityId::BuildTechLabStarport
+			)
+		)
+	}
+	/// Terran building is making a reactor.
+	pub fn is_making_reactor(&self) -> bool {
+		matches!(
+			self.ordered_ability(),
+			Some(
+				AbilityId::BuildReactorBarracks
+					| AbilityId::BuildReactorFactory
+					| AbilityId::BuildReactorStarport
+			)
+		)
+	}
+}
+
+fn sum_options(a: Option<u32>, b: Option<u32>) -> Option<u32> {
+	match (a, b) {
+		(Some(a), Some(b)) => Some(a + b),
+		(a, None) => a,
+		(None, b) => b,
+	}
+}
+
+fn percentage(current: Option<u32>, max: Option<u32>) -> Option<f32> {
+	let (current, max) = (current?, max?);
+	if max == 0 {
+		None
+	} else {
+		Some(current as f32 / max as f32)
+	}
 }
 
 /// A unit on the current step, together with the [`World`] it belongs to.
 ///
-/// It's two references, so it's `Copy` and free to pass around. Plain data is
+/// It's two references and an index, so it's `Copy` and free to pass around. Plain data is
 /// available directly through `Deref` (`u.tag`, `u.position`), while methods that
 /// need game rules read them from the world. The lifetime ties it to its step.
 #[derive(Clone, Copy)]
 pub struct UnitRef<'w> {
 	data: &'w UnitData,
 	world: &'w World,
+	id: u32,
 }
 
 impl Deref for UnitRef<'_> {
@@ -279,9 +592,18 @@ impl From<UnitRef<'_>> for Point2 {
 	}
 }
 
+impl Radius for UnitRef<'_> {
+	fn radius(&self) -> f32 {
+		self.data.radius
+	}
+}
+
 impl<'w> UnitRef<'w> {
-	pub(super) fn new(data: &'w UnitData, world: &'w World) -> Self {
-		Self { data, world }
+	pub(super) fn new(data: &'w UnitData, world: &'w World, id: u32) -> Self {
+		Self { data, world, id }
+	}
+	pub(super) fn id(self) -> u32 {
+		self.id
 	}
 	/// The world this unit belongs to.
 	pub fn world(self) -> &'w World {
@@ -292,10 +614,10 @@ impl<'w> UnitRef<'w> {
 		self.data
 	}
 
-	fn type_data(self) -> Option<&'w UnitTypeData> {
+	pub(super) fn type_data(self) -> Option<&'w UnitTypeData> {
 		self.world.map.game_data.units.get(&self.data.type_id)
 	}
-	fn upgrades(self) -> &'w FxHashSet<UpgradeId> {
+	pub(super) fn upgrades(self) -> &'w FxHashSet<UpgradeId> {
 		if self.data.is_mine() {
 			&self.world.upgrades
 		} else {
@@ -310,14 +632,102 @@ impl<'w> UnitRef<'w> {
 	pub fn race(self) -> Race {
 		self.type_data().map_or(Race::Random, |d| d.race)
 	}
+	/// Checks if it's a mineral field.
+	pub fn is_mineral(self) -> bool {
+		self.type_data().map_or(false, |d| d.has_minerals)
+	}
+	/// Checks if it's a vespene geyser.
+	pub fn is_geyser(self) -> bool {
+		self.type_data().map_or(false, |d| d.has_vespene)
+	}
+	/// Attributes of the unit, dependent on its type.
+	pub fn attributes(self) -> &'w [Attribute] {
+		self.type_data().map_or(&[], |d| d.attributes.as_slice())
+	}
 	/// Checks if unit has given attribute.
 	pub fn has_attribute(self, attribute: Attribute) -> bool {
-		self.type_data()
-			.map_or(false, |d| d.attributes.contains(&attribute))
+		self.attributes().contains(&attribute)
 	}
 	/// Checks if unit is a structure.
 	pub fn is_structure(self) -> bool {
 		self.has_attribute(Attribute::Structure)
+	}
+	/// Checks if unit has the `Light` attribute.
+	pub fn is_light(self) -> bool {
+		self.has_attribute(Attribute::Light)
+	}
+	/// Checks if unit has the `Armored` attribute.
+	pub fn is_armored(self) -> bool {
+		self.has_attribute(Attribute::Armored)
+	}
+	/// Checks if unit has the `Biological` attribute.
+	pub fn is_biological(self) -> bool {
+		self.has_attribute(Attribute::Biological)
+	}
+	/// Checks if unit has the `Mechanical` attribute.
+	pub fn is_mechanical(self) -> bool {
+		self.has_attribute(Attribute::Mechanical)
+	}
+	/// Checks if unit has the `Robotic` attribute.
+	pub fn is_robotic(self) -> bool {
+		self.has_attribute(Attribute::Robotic)
+	}
+	/// Checks if unit has the `Psionic` attribute.
+	pub fn is_psionic(self) -> bool {
+		self.has_attribute(Attribute::Psionic)
+	}
+	/// Checks if unit has the `Massive` attribute.
+	pub fn is_massive(self) -> bool {
+		self.has_attribute(Attribute::Massive)
+	}
+	/// Checks if unit has the `Hover` attribute.
+	pub fn is_hover(self) -> bool {
+		self.has_attribute(Attribute::Hover)
+	}
+	/// Checks if unit has the `Heroic` attribute.
+	pub fn is_heroic(self) -> bool {
+		self.has_attribute(Attribute::Heroic)
+	}
+	/// Checks if unit has the `Summoned` attribute.
+	pub fn is_summoned(self) -> bool {
+		self.has_attribute(Attribute::Summoned)
+	}
+	/// Half of the building's size, but `2.5` for addons.
+	pub fn footprint_radius(self) -> Option<f32> {
+		let ability = self.type_data()?.ability?;
+		self.world.map.game_data.abilities.get(&ability)?.footprint_radius
+	}
+	/// Building size in tiles (e.g. `2` for supply and addons, `3` for barracks).
+	pub fn building_size(self) -> Option<usize> {
+		if self.data.is_addon() {
+			Some(2)
+		} else {
+			self.footprint_radius().map(|radius| (radius * 2.0) as usize)
+		}
+	}
+	/// How long the unit takes to build.
+	pub fn build_time(self) -> f32 {
+		self.type_data().map_or(0.0, |d| d.build_time)
+	}
+	/// Space the unit takes in transports and bunkers.
+	pub fn cargo_size(self) -> u32 {
+		self.type_data().map_or(0, |d| d.cargo_size)
+	}
+	/// How far the unit can see.
+	pub fn sight_range(self) -> f32 {
+		self.type_data().map_or(0.0, |d| d.sight_range)
+	}
+	/// Initial armor, without upgrades and buffs.
+	pub fn armor(self) -> i32 {
+		self.type_data().map_or(0, |d| d.armor)
+	}
+	/// How much supply this unit uses.
+	pub fn supply_cost(self) -> f32 {
+		self.type_data().map_or(0.0, |d| d.food_required)
+	}
+	/// Cost of the unit.
+	pub fn cost(self) -> Cost {
+		self.type_data().map_or_else(Cost::default, |d| d.cost())
 	}
 	/// Terran building's addon is a techlab.
 	pub fn has_techlab(self) -> bool {
@@ -345,93 +755,38 @@ impl<'w> UnitRef<'w> {
 			_ => 0,
 		}
 	}
+	/// Abilities available to the unit. Empty when it's on
+	/// cooldown, out of energy or you can't afford them.
+	pub fn abilities(self) -> Option<&'w FxHashSet<AbilityId>> {
+		self.world.abilities.get(&self.data.tag)
+	}
 	/// Checks if ability is available for the unit.
 	pub fn has_ability(self, ability: AbilityId) -> bool {
-		self.world
-			.abilities
-			.get(&self.data.tag)
-			.map_or(false, |a| a.contains(&ability))
+		self.abilities().map_or(false, |a| a.contains(&ability))
 	}
-	/// Max cooldown in frames seen so far for this unit type's weapon.
-	pub fn max_cooldown(self) -> Option<f32> {
-		self.world.max_cooldowns.get(&self.data.type_id).copied()
-	}
-	/// Weapons of the unit.
-	pub fn weapons(self) -> &'w [Weapon] {
-		match self.data.type_id {
-			UnitTypeId::Changeling
-			| UnitTypeId::ChangelingZealot
-			| UnitTypeId::ChangelingMarineShield
-			| UnitTypeId::ChangelingMarine
-			| UnitTypeId::ChangelingZerglingWings
-			| UnitTypeId::ChangelingZergling => &[],
-			UnitTypeId::Baneling | UnitTypeId::BanelingBurrowed | UnitTypeId::BanelingCocoon => {
-				&MISSED_WEAPONS[&UnitTypeId::Baneling]
-			}
-			UnitTypeId::RavagerCocoon => self
-				.world
-				.map
-				.game_data
-				.units
-				.get(&UnitTypeId::Ravager)
-				.map_or(&[], |d| d.weapons.as_slice()),
-			unit_type => self
-				.type_data()
-				.map(|d| d.weapons.as_slice())
-				.filter(|w| !w.is_empty())
-				.or_else(|| MISSED_WEAPONS.get(&unit_type).map(|w| w.as_slice()))
-				.unwrap_or_default(),
+	/// Production building with a reactor has a free slot, otherwise the unit is idle.
+	pub fn is_unused(self) -> bool {
+		if self.has_reactor() {
+			self.data.orders.len() < 2
+		} else {
+			self.data.is_idle()
 		}
 	}
-	/// Checks if unit can attack ground targets.
-	pub fn can_attack_ground(self) -> bool {
-		self.weapons().iter().any(|w| !w.target.is_air())
-	}
-	/// Checks if unit can attack air targets.
-	pub fn can_attack_air(self) -> bool {
-		self.weapons().iter().any(|w| !w.target.is_ground())
-	}
-	/// Ground weapon range, without upgrades.
-	pub fn ground_range(self) -> f32 {
-		self.weapons()
-			.iter()
-			.find(|w| !w.target.is_air())
-			.map_or(0.0, |w| w.range)
-	}
-	/// Air weapon range, without upgrades.
-	pub fn air_range(self) -> f32 {
-		self.weapons()
-			.iter()
-			.find(|w| !w.target.is_ground())
-			.map_or(0.0, |w| w.range)
-	}
-	/// Checks if unit is close enough to attack given target, without considering upgrades.
-	pub fn in_range(self, target: UnitRef<'_>, gap: f32) -> bool {
-		let range = if target.type_id == UnitTypeId::Colossus {
-			match self.weapons().iter().map(|w| w.range).max_by(f32::total_cmp) {
-				Some(max_range) => max_range,
-				None => return false,
-			}
+	/// As [`is_unused`](Self::is_unused), counting orders more than 95% complete as finished.
+	pub fn is_almost_unused(self) -> bool {
+		if self.has_reactor() {
+			self.data.orders.len() < 2
+				|| (self.data.orders.len() == 2 && self.data.orders.iter().any(|o| o.progress >= 0.95))
 		} else {
-			let range = if target.is_flying {
-				self.air_range()
-			} else {
-				self.ground_range()
-			};
-			if range < f32::EPSILON {
-				return false;
-			}
-			range
-		};
-		let distance = self.data.position.distance_squared(target.position);
-
-		// Takes into account that Sieged Tank has a minimum range of 2
-		(self.data.type_id != UnitTypeId::SiegeTankSieged || distance > 4.0)
-			&& distance <= (self.data.radius + target.radius + range + gap).powi(2)
+			self.data.is_almost_idle()
+		}
 	}
-	/// Checks if unit is close enough to be attacked by given threat.
-	pub fn in_range_of(self, threat: UnitRef<'_>, gap: f32) -> bool {
-		threat.in_range(self, gap)
+	/// Unit was put to sleep with [`Commands::sleep`](super::Commands::sleep).
+	pub fn is_sleeping(self) -> bool {
+		self.world
+			.available_frames
+			.get(&self.data.tag)
+			.map_or(false, |frame| self.world.game_loop < *frame)
 	}
 	/// Movement speed from unit data, without buffs and upgrades.
 	pub fn speed(self) -> f32 {
@@ -439,8 +794,7 @@ impl<'w> UnitRef<'w> {
 	}
 	/// Actual speed of the unit, including buffs, upgrades and creep.
 	///
-	/// Not cached yet. The old API caches this per unit, which is what puts a
-	/// lazy cell in every unit; a cache here should be measured first.
+	/// The old `Unit::real_speed` applies the on-creep bonus off creep instead.
 	pub fn real_speed(self) -> f32 {
 		let mut speed = self.speed();
 		let unit_type = self.data.type_id;
@@ -466,7 +820,7 @@ impl<'w> UnitRef<'w> {
 				speed *= increase;
 			}
 		}
-		if self.world.creep[self.data.position].is_set() {
+		if self.world.has_creep(self.data.position) {
 			if let Some(increase) = SPEED_ON_CREEP.get(&unit_type) {
 				speed *= increase;
 			}
@@ -479,5 +833,13 @@ impl<'w> UnitRef<'w> {
 			}
 		}
 		speed
+	}
+	/// Distance the unit can travel per step.
+	pub fn distance_per_step(self) -> f32 {
+		self.real_speed() / FRAMES_PER_SECOND * self.world.game_step as f32
+	}
+	/// Distance the unit can travel until its weapons are ready to fire.
+	pub fn distance_to_weapon_ready(self) -> f32 {
+		self.real_speed() / FRAMES_PER_SECOND * self.data.weapon_cooldown.unwrap_or(0.0)
 	}
 }
