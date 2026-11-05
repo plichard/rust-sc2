@@ -1,6 +1,17 @@
+"""Generates src/ids from the stableid.json that SC2 writes when it starts.
+
+Run from the repository root:
+
+	python3 generate_ids.py [path/to/stableid.json]
+
+IDs change between game versions, so use the file from the client you play on. Under Wine
+that's in the Wine prefix (drive_c/users/<user>/Documents/StarCraft II/), not your own
+Documents. Without a path, it reads ~/Documents/StarCraft II/stableid.json.
+"""
+
 from json import load
 from pathlib import Path
-from sys import argv
+from sys import argv, exit
 
 HEAD = """\
 #![allow(deprecated)]
@@ -177,9 +188,15 @@ def generate():
 		[],
 		["mod impls;"],
 	]
-	enums_latest = parse_data(
-		load((Path.home() / "Documents" / "StarCraft II" / "stableid.json").open())
+	source = (
+		Path(argv[1])
+		if len(argv) > 1
+		else Path.home() / "Documents" / "StarCraft II" / "stableid.json"
 	)
+	if not source.is_file():
+		exit(f"Can't find {source}. Pass the path to your client's stableid.json.")
+	print(f"Generating IDs from {source}")
+	enums_latest = parse_data(load(source.open()))
 	enums_linux = enums_latest
 	# parse_data(
 	# 	load(
