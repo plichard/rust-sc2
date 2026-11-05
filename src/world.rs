@@ -93,16 +93,16 @@ pub struct World {
 	pub expansions: Vec<Expansion>,
 	/// Orders of your units, counted by ability.
 	pub orders: FxHashMap<AbilityId, usize>,
-	/// Your ready units, counted by type.
-	pub current_units: FxHashMap<UnitTypeId, usize>,
-	/// In-progress enemy units in [`enemy`](Self::enemy), counted by type.
-	pub enemies_ordered: FxHashMap<UnitTypeId, usize>,
-	/// Ready enemy units in [`enemy`](Self::enemy), counted by type. Skips hallucinations.
-	pub enemies_current: FxHashMap<UnitTypeId, usize>,
-	/// In-progress enemy units in [`enemy_memory`](Self::enemy_memory), counted by type.
-	pub remembered_ordered: FxHashMap<UnitTypeId, usize>,
-	/// Ready enemy units in [`enemy_memory`](Self::enemy_memory), counted by type.
-	pub remembered_current: FxHashMap<UnitTypeId, usize>,
+	// Your ready units, counted by type. Read through `counter`.
+	pub(crate) current_units: FxHashMap<UnitTypeId, usize>,
+	// In-progress enemy units in `enemy`, counted by type. Read through `enemy_counter`.
+	pub(crate) enemies_ordered: FxHashMap<UnitTypeId, usize>,
+	// Ready enemy units in `enemy`, counted by type, without hallucinations.
+	pub(crate) enemies_current: FxHashMap<UnitTypeId, usize>,
+	// In-progress enemy units in `enemy_memory`, counted by type. Read through `remembered_counter`.
+	pub(crate) remembered_ordered: FxHashMap<UnitTypeId, usize>,
+	// Ready enemy units in `enemy_memory`, counted by type.
+	pub(crate) remembered_current: FxHashMap<UnitTypeId, usize>,
 
 	// This step's units come first, followed by what only enemy memory holds.
 	pub(super) units: Vec<UnitData>,
