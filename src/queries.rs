@@ -48,7 +48,7 @@ impl API {
 		for (start, goal) in paths {
 			let mut pathing = RequestQueryPathing::new();
 			match start {
-				Target::Tag(tag) => pathing.set_unit_tag(tag),
+				Target::Tag(tag) => pathing.set_unit_tag(tag.get()),
 				Target::Pos(pos) => pathing.set_start_pos(pos.into_proto()),
 				Target::None => return Err("start of a pathing query must be a position or a tag".into()),
 			}

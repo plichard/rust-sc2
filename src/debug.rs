@@ -3,6 +3,7 @@
 use crate::{
 	geometry::{Point2, Point3},
 	ids::UnitTypeId,
+	unit::UnitTag,
 	IntoProto, IntoProtoField,
 };
 use num_traits::ToPrimitive;
@@ -22,7 +23,7 @@ type ScreenPos = (f32, f32);
 pub struct Debugger {
 	debug_commands: Vec<DebugCommand>,
 	debug_drawings: Vec<DebugDraw>,
-	kill_tags: FxHashSet<u64>,
+	kill_tags: FxHashSet<UnitTag>,
 }
 impl Debugger {
 	pub(crate) fn get_commands(&mut self) -> &[DebugCommand] {
@@ -89,13 +90,13 @@ impl Debugger {
 		);
 	}
 	/// Kills units with given tags.
-	pub fn kill_units<'a, T: IntoIterator<Item = &'a u64>>(&mut self, tags: T) {
+	pub fn kill_units<'a, T: IntoIterator<Item = &'a UnitTag>>(&mut self, tags: T) {
 		self.kill_tags.extend(tags);
 	}
 	/// Sets values for units using given commands in format: (unit tag, value type, value).
 	pub fn set_unit_values<'a, T>(&mut self, cmds: T)
 	where
-		T: IntoIterator<Item = &'a (u64, UnitValue, u32)>,
+		T: IntoIterator<Item = &'a (UnitTag, UnitValue, u32)>,
 	{
 		self.debug_commands.extend(
 			cmds.into_iter()
@@ -184,11 +185,11 @@ pub(crate) enum DebugCommand {
 	Draw(Vec<DebugDraw>),
 	GameState(DebugGameState),
 	CreateUnit(UnitTypeId, Option<u32>, Point2, u32),
-	KillUnit(Vec<u64>),
+	KillUnit(Vec<UnitTag>),
 	// TestProcess,
 	// SetScore,
 	EndGame(bool),
-	SetUnitValue(u64, UnitValue, u32),
+	SetUnitValue(UnitTag, UnitValue, u32),
 }
 impl IntoProto<ProtoDebugCommand> for &DebugCommand {
 	fn into_proto(self) -> ProtoDebugCommand {
@@ -205,7 +206,9 @@ impl IntoProto<ProtoDebugCommand> for &DebugCommand {
 				*unit.pos.mut_or_insert_default() = pos.into_proto();
 				unit.set_quantity(*count);
 			}
-			DebugCommand::KillUnit(tags) => proto.mut_kill_unit().tag = tags.to_vec(),
+			DebugCommand::KillUnit(tags) => {
+				proto.mut_kill_unit().tag = tags.iter().map(|tag| tag.get()).collect()
+			}
 			DebugCommand::EndGame(win) => {
 				let end_game = proto.mut_end_game();
 				if *win {
@@ -214,7 +217,7 @@ impl IntoProto<ProtoDebugCommand> for &DebugCommand {
 			}
 			DebugCommand::SetUnitValue(tag, unit_value, value) => {
 				let cmd = proto.mut_unit_value();
-				cmd.set_unit_tag(*tag);
+				cmd.set_unit_tag(tag.get());
 				cmd.set_unit_value(unit_value.into_proto());
 				cmd.set_value(*value as f32);
 			}

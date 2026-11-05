@@ -317,7 +317,7 @@ fn identical_commands_are_merged() {
 	}
 	let actions = cmds.take_actions();
 	assert_eq!(actions.len(), 1);
-	assert!(matches!(&actions[0], Action::UnitCommand(_, _, units, _) if units == &[1, 2]));
+	assert!(matches!(&actions[0], Action::UnitCommand(_, _, units, _) if units == &[t(1), t(2)]));
 	assert!(cmds.take_actions().is_empty());
 }
 
@@ -757,4 +757,62 @@ mod ids {
 		data.abilities.push(ability);
 		assert_eq!(check_ids(&data), vec![]);
 	}
+}
+
+#[test]
+fn every_tag_sc2_reports_is_a_unit_tag() {
+	let mut bunker = unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0));
+	let mut passenger = sc2_proto::raw::PassengerUnit::new();
+	passenger.set_tag(2);
+	passenger.set_unit_type(UnitTypeId::Probe.to_u32().unwrap());
+	bunker.passengers.push(passenger);
+	let mut rally = sc2_proto::raw::RallyTarget::new();
+	rally.set_tag(3);
+	bunker.rally_targets.push(rally);
+	bunker.add_on_tag = Some(4);
+	bunker.engaged_target_tag = Some(5);
+	let mut order = sc2_proto::raw::UnitOrder::new();
+	order.set_ability_id(AbilityId::Attack.to_u32().unwrap());
+	order.set_target_unit_tag(6);
+	bunker.orders.push(order);
+
+	let mut res = observation(vec![bunker], &[]);
+	let raw = res
+		.observation
+		.mut_or_insert_default()
+		.raw_data
+		.mut_or_insert_default();
+	let mut pylon = sc2_proto::raw::PowerSource::new();
+	pylon.set_tag(7);
+	raw.player.mut_or_insert_default().power_sources.push(pylon);
+	let mut error = sc2_proto::sc2api::ActionError::new();
+	error.set_unit_tag(8);
+	error.set_ability_id(AbilityId::Attack.to_u64().unwrap());
+	res.action_errors.push(error);
+
+	let (world, _) = build_world(&empty_world(), &res, Default::default());
+	let u = world.unit(t(1)).unwrap();
+	assert_eq!(u.passengers[0].tag, t(2));
+	assert_eq!(u.rally_targets[0].tag, Some(t(3)));
+	assert_eq!(u.addon_tag, Some(t(4)));
+	assert_eq!(u.engaged_target_tag, Some(t(5)));
+	assert_eq!(u.tartag(), Some(t(6)));
+	assert_eq!(world.psionic_matrix[0].tag, t(7));
+	assert_eq!(world.action_errors[0].unit, t(8));
+}
+
+#[test]
+fn targets_convert_from_positions_units_and_tags() {
+	let (world, _) = step(
+		&empty_world(),
+		vec![unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0))],
+		&[],
+	);
+	let probe = world.unit(t(1)).unwrap();
+	assert_eq!(Target::from(probe), Target::Tag(t(1)));
+	assert_eq!(Target::from(t(1)), Target::Tag(t(1)));
+	assert_eq!(
+		Target::from(Point2::new(1.0, 2.0)),
+		Target::Pos(Point2::new(1.0, 2.0))
+	);
 }

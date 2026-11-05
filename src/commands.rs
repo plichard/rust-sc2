@@ -20,8 +20,8 @@ impl From<Point2> for Target {
 /// Orders take a [`UnitRef`], so you can only command a unit that exists on this step.
 #[derive(Default)]
 pub struct Commands {
-	commands: Vec<(AbilityId, Target, bool, Vec<u64>)>,
-	autocast: FxHashMap<AbilityId, Vec<u64>>,
+	commands: Vec<(AbilityId, Target, bool, Vec<UnitTag>)>,
+	autocast: FxHashMap<AbilityId, Vec<UnitTag>>,
 	actions: Vec<Action>,
 	pub(super) sleeping: Vec<(UnitTag, u32)>,
 	pub(super) game_step: Option<u32>,
@@ -38,11 +38,11 @@ impl Commands {
 		let target = target.into();
 		for (a, t, q, units) in &mut self.commands {
 			if *a == ability && *t == target && *q == queue {
-				units.push(unit.tag.get());
+				units.push(unit.tag);
 				return;
 			}
 		}
-		self.commands.push((ability, target, queue, vec![unit.tag.get()]));
+		self.commands.push((ability, target, queue, vec![unit.tag]));
 	}
 	/// Orders unit to attack given target.
 	pub fn attack(&mut self, unit: UnitRef<'_>, target: impl Into<Target>, queue: bool) {
@@ -166,7 +166,7 @@ impl Commands {
 	}
 	/// Toggles autocast on given ability.
 	pub fn toggle_autocast(&mut self, unit: UnitRef<'_>, ability: AbilityId) {
-		self.autocast.entry(ability).or_default().push(unit.tag.get());
+		self.autocast.entry(ability).or_default().push(unit.tag);
 	}
 	/// Makes [`is_sleeping`](UnitRef::is_sleeping) return `true` for this unit for given
 	/// number of frames, starting from the next step.

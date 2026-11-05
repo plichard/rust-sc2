@@ -3,6 +3,7 @@
 use crate::{
 	geometry::{Point2, Point3},
 	ids::AbilityId,
+	unit::UnitTag,
 	FromProto, IntoProto,
 };
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -21,7 +22,7 @@ pub enum Target {
 	/// Ability target is position (move, build, ...).
 	Pos(Point2),
 	/// Ability target is unit (attack, repair, heal, ...).
-	Tag(u64),
+	Tag(UnitTag),
 	/// Ability don't require target (train, morph, research, ...).
 	None,
 }
@@ -29,9 +30,9 @@ pub enum Target {
 #[doc(hidden)]
 #[derive(Debug, Clone)]
 pub enum Action {
-	UnitCommand(AbilityId, Target, Vec<u64>, bool),
+	UnitCommand(AbilityId, Target, Vec<UnitTag>, bool),
 	CameraMove(Point3),
-	ToggleAutocast(AbilityId, Vec<u64>),
+	ToggleAutocast(AbilityId, Vec<UnitTag>),
 	Chat(String, bool),
 }
 impl IntoProto<ProtoAction> for &Action {
@@ -55,10 +56,10 @@ impl IntoProto<ProtoAction> for &Action {
 				unit_command.set_ability_id(ability.to_i32().unwrap());
 				match target {
 					Target::Pos(pos) => unit_command.set_target_world_space_pos(pos.into_proto()),
-					Target::Tag(tag) => unit_command.set_target_unit_tag(*tag),
+					Target::Tag(tag) => unit_command.set_target_unit_tag(tag.get()),
 					Target::None => {}
 				}
-				unit_command.unit_tags = units.to_vec();
+				unit_command.unit_tags = units.iter().map(|tag| tag.get()).collect();
 				unit_command.set_queue_command(*queue);
 			}
 			Action::CameraMove(pos) => {
@@ -68,7 +69,7 @@ impl IntoProto<ProtoAction> for &Action {
 			Action::ToggleAutocast(ability, units) => {
 				let toggle_autocast = action.action_raw.mut_or_insert_default().mut_toggle_autocast();
 				toggle_autocast.set_ability_id(ability.to_i32().unwrap());
-				toggle_autocast.unit_tags = units.to_vec();
+				toggle_autocast.unit_tags = units.iter().map(|tag| tag.get()).collect();
 			}
 		}
 		action
@@ -87,11 +88,11 @@ impl FromProto<&ProtoAction> for Option<Action> {
 					},
 					match &unit_command.target {
 						Some(ProtoTarget::TargetWorldSpacePos(pos)) => Target::Pos(Point2::from_proto(pos)),
-						Some(ProtoTarget::TargetUnitTag(tag)) => Target::Tag(*tag),
+						Some(ProtoTarget::TargetUnitTag(tag)) => Target::Tag(UnitTag(*tag)),
 						None => Target::None,
 						_ => Target::None,
 					},
-					unit_command.unit_tags.clone(),
+					unit_command.unit_tags.iter().copied().map(UnitTag).collect(),
 					unit_command.queue_command.is_some(),
 				)),
 				ProtoRawAction::CameraMove(camera_move) => Some(Action::CameraMove(Point3::from_proto(
@@ -103,7 +104,7 @@ impl FromProto<&ProtoAction> for Option<Action> {
 						AbilityId::from_i32(id)
 							.unwrap_or_else(|| panic!("There's no `AbilityId` with value {}", id))
 					},
-					toggle_autocast.unit_tags.clone(),
+					toggle_autocast.unit_tags.iter().copied().map(UnitTag).collect(),
 				)),
 				_ => {
 					panic!("Unhandled action");
@@ -127,7 +128,7 @@ impl FromProto<&ProtoAction> for Option<Action> {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct ActionError {
 	/// Tag of unit that was executing action.
-	pub unit: u64,
+	pub unit: UnitTag,
 	/// Ability that was used by this unit.
 	pub ability: AbilityId,
 	/// Result of executed action.
@@ -136,7 +137,7 @@ pub struct ActionError {
 impl FromProto<&ProtoActionError> for ActionError {
 	fn from_proto(e: &ProtoActionError) -> Self {
 		Self {
-			unit: e.unit_tag(),
+			unit: UnitTag(e.unit_tag()),
 			ability: {
 				let id = e.ability_id();
 				AbilityId::from_u64(id).unwrap_or_else(|| panic!("There's no `AbilityId` with value {}", id))

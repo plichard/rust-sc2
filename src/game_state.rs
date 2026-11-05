@@ -1,6 +1,6 @@
 //! Types describing what's happening in the game, available through [`World`](crate::World).
 
-use crate::{geometry::Point2, ids::*, FromProto};
+use crate::{geometry::Point2, ids::*, unit::UnitTag, FromProto};
 use sc2_proto::{
 	raw::{Alliance as ProtoAlliance, PowerSource as ProtoPowerSource},
 	sc2api::Alert as ProtoAlert,
@@ -23,14 +23,14 @@ pub struct PsionicMatrix {
 	/// Radius of the matrix: shold be `6.5` for pylon and `3.75` for warp prism in phsing mode.
 	pub radius: f32,
 	/// Tag of unit that is source of power matrix.
-	pub tag: u64,
+	pub tag: UnitTag,
 }
 impl FromProto<&ProtoPowerSource> for PsionicMatrix {
 	fn from_proto(ps: &ProtoPowerSource) -> Self {
 		Self {
 			pos: Point2::from_proto(ps.pos.get_or_default()),
 			radius: ps.radius(),
-			tag: ps.tag(),
+			tag: UnitTag(ps.tag()),
 		}
 	}
 }

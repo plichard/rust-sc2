@@ -26,15 +26,14 @@ use std::{ops::Deref, sync::Mutex};
 /// than visible ones, so the tag of a mineral field or geyser changes as it goes in and out
 /// of vision. Use positions for those, which is what [`Expansion`](crate::Expansion) does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct UnitTag(pub(super) u64);
+pub struct UnitTag(pub(crate) u64);
 
 impl UnitTag {
-	/// The value SC2 uses, for APIs that still take a plain tag such as [`Debugger`](crate::debug::Debugger).
+	/// The value SC2 uses, for sending your own [`Request`](crate::Request)s.
 	pub fn get(self) -> u64 {
 		self.0
 	}
-	/// Makes a tag from a value SC2 sent, for parts that still report plain tags
-	/// such as [`PassengerUnit`] and [`RallyTarget`].
+	/// Makes a tag from a value SC2 sent, for reading responses to your own [`Request`](crate::Request)s.
 	pub fn from_raw(tag: u64) -> Self {
 		Self(tag)
 	}
@@ -48,13 +47,13 @@ impl From<UnitRef<'_>> for UnitTag {
 impl From<UnitTag> for Target {
 	#[inline]
 	fn from(tag: UnitTag) -> Self {
-		Target::Tag(tag.0)
+		Target::Tag(tag)
 	}
 }
 impl From<UnitRef<'_>> for Target {
 	#[inline]
 	fn from(u: UnitRef<'_>) -> Self {
-		Target::Tag(u.data.tag.0)
+		Target::Tag(u.data.tag)
 	}
 }
 
@@ -221,7 +220,7 @@ impl UnitData {
 					.unwrap_or(AbilityId::NullNull),
 					target: match &order.target {
 						Some(ProtoTarget::TargetWorldSpacePos(pos)) => Target::Pos(Point2::from_proto(pos)),
-						Some(ProtoTarget::TargetUnitTag(tag)) => Target::Tag(*tag),
+						Some(ProtoTarget::TargetUnitTag(tag)) => Target::Tag(UnitTag(*tag)),
 						_ => Target::None,
 					},
 					progress: order.progress(),
@@ -233,7 +232,7 @@ impl UnitData {
 				.iter()
 				.filter_map(|p| {
 					Some(PassengerUnit {
-						tag: p.tag(),
+						tag: UnitTag(p.tag()),
 						health: p.health(),
 						health_max: p.health_max(),
 						shield: p.shield(),
@@ -261,7 +260,7 @@ impl UnitData {
 				.iter()
 				.map(|t| RallyTarget {
 					point: Point2::from_proto(t.point.get_or_default()),
-					tag: t.tag,
+					tag: t.tag.map(UnitTag),
 				})
 				.collect(),
 		})
@@ -437,7 +436,7 @@ impl UnitData {
 	/// Target tag of the current order.
 	pub fn tartag(&self) -> Option<UnitTag> {
 		match self.target() {
-			Target::Tag(tag) => Some(UnitTag(tag)),
+			Target::Tag(tag) => Some(tag),
 			_ => None,
 		}
 	}
@@ -920,7 +919,7 @@ pub struct UnitOrder {
 /// Unit inside a transport or bunker, in [`UnitData::passengers`].
 #[derive(Clone)]
 pub struct PassengerUnit {
-	pub tag: u64,
+	pub tag: UnitTag,
 	pub health: f32,
 	pub health_max: f32,
 	pub shield: f32,
@@ -936,7 +935,7 @@ pub struct RallyTarget {
 	/// Rally point. Position building rallied on.
 	pub point: Point2,
 	/// Filled if building is rallied on unit.
-	pub tag: Option<u64>,
+	pub tag: Option<UnitTag>,
 }
 
 /// Trait for radius
