@@ -663,7 +663,8 @@ fn update_memory(
 				remove.push(u.tag);
 			}
 		} else {
-			// A structure that's no longer reported was destroyed
+			// Either destroyed, or it's in the fog now and listed under a temporary tag,
+			// in which case it was added above as a new entry
 			remove.push(u.tag);
 		}
 	}

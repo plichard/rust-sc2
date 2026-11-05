@@ -95,9 +95,9 @@ pub struct World {
 	pub orders: FxHashMap<AbilityId, usize>,
 	/// Your ready units, counted by type.
 	pub current_units: FxHashMap<UnitTypeId, usize>,
-	/// In-progress enemy units, counted by type.
+	/// In-progress enemy units in [`enemy`](Self::enemy), counted by type.
 	pub enemies_ordered: FxHashMap<UnitTypeId, usize>,
-	/// Ready enemy units, counted by type.
+	/// Ready enemy units in [`enemy`](Self::enemy), counted by type. Skips hallucinations.
 	pub enemies_current: FxHashMap<UnitTypeId, usize>,
 	/// In-progress enemy units in [`enemy_memory`](Self::enemy_memory), counted by type.
 	pub remembered_ordered: FxHashMap<UnitTypeId, usize>,
@@ -205,7 +205,8 @@ impl World {
 			searchable: true,
 		}
 	}
-	/// Opponent's units.
+	/// Opponent's units in this step's observation: everything visible, plus snapshots of what's in
+	/// the fog of war, mainly buildings. Use [`visible`](Units::visible) for only what's visible now.
 	pub fn enemy(&self) -> PlayerUnits<'_> {
 		PlayerUnits {
 			world: self,
@@ -215,6 +216,10 @@ impl World {
 	}
 	/// Opponent's units, including ones seen on earlier steps that are probably still around:
 	/// out of vision, or thought to be burrowed. Their data is from when they were last seen.
+	///
+	/// A unit is forgotten once its last known position comes into view and it isn't there, even
+	/// if it only walked away, so this isn't a count of everything the opponent has. SC2 doesn't
+	/// report enemies dying out of your vision, so this can also hold units that are already dead.
 	///
 	/// [`enemy`](Self::enemy) on the other hand reports exactly what SC2 said on this step.
 	pub fn enemy_memory(&self) -> PlayerUnits<'_> {

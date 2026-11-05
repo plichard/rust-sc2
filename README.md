@@ -205,7 +205,7 @@ let workers: Vec<_> = ctx.world.my().workers().iter().collect();
 let scores: Vec<_> = workers.par_iter().map(|u| score(*u)).collect();
 ```
 
-To remember a unit between steps, keep its `UnitTag` and look it up with `ctx.world.unit(tag)`, which returns `None` once the unit is gone from the observation. A `UnitRef` can't be kept past the step it belongs to. The one exception is resources: SC2 changes the tags of mineral fields and geysers as they go in and out of vision, so `Expansion` stores their positions, and `ctx.world.minerals_of(expansion)` finds them on the current step.
+To remember a unit between steps, keep its `UnitTag` and look it up with `ctx.world.unit(tag)`, which returns `None` once the unit is gone from the observation. A `UnitRef` can't be kept past the step it belongs to. The exception is anything SC2 shows as a snapshot in the fog of war: enemy buildings, mineral fields and geysers get temporary tags there. Remember those by position instead, which is why `Expansion` stores positions, and `ctx.world.minerals_of(expansion)` finds its minerals on the current step.
 
 The rest is to run it:
 ```rust

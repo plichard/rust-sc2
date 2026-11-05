@@ -22,9 +22,14 @@ use std::{ops::Deref, sync::Mutex};
 
 /// Identifies a unit. Only comes from SC2, so it can't be confused with another number.
 ///
-/// Keep these to remember a unit between steps. SC2 gives units in the fog of war other tags
-/// than visible ones, so the tag of a mineral field or geyser changes as it goes in and out
-/// of vision. Use positions for those, which is what [`Expansion`](crate::Expansion) does.
+/// A visible unit keeps its tag for its whole life, including through most morphs and burrowing,
+/// so keep tags to remember your own units, or enemy units you've seen.
+///
+/// Things SC2 shows as snapshots in the fog of war get temporary tags instead, which aren't reused
+/// after the next time they're seen. That covers enemy buildings, mineral fields and geysers, so
+/// looking up the real tag of one gives `None` while it's fogged. Remember those by position, which
+/// is what [`Expansion`](crate::Expansion) does, and only count units with
+/// [`is_visible`](UnitData::is_visible) if you're counting by tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct UnitTag(pub(crate) u64);
 
