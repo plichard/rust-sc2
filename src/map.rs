@@ -73,8 +73,6 @@ pub struct MapData {
 	/// IDs where the library's tables disagree with this client. Should be empty.
 	/// If it isn't, run `generate_ids.py` with this client's `stableid.json`.
 	pub id_mismatches: Vec<IdMismatch>,
-	// Tags of resources as they were when visible, used to label their deaths.
-	pub(super) resource_tags: FxHashSet<UnitTag>,
 }
 
 fn is_placeable(game_info: &GameInfo, pos: (usize, usize)) -> bool {
@@ -336,7 +334,6 @@ pub(super) fn analyze(
 		ramps,
 		vision_blockers,
 		id_mismatches,
-		resource_tags: resources.iter().map(|r| r.tag).collect(),
 	};
 	Ok((map, enemy_race, expansions))
 }

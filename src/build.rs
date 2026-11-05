@@ -185,8 +185,6 @@ pub(super) fn build_world(
 			Some(Alliance::Own)
 		} else if was_hallucination || was_remembered {
 			Some(Alliance::Enemy)
-		} else if map.resource_tags.contains(tag) {
-			Some(Alliance::Neutral)
 		} else {
 			last_seen
 		};

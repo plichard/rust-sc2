@@ -519,12 +519,12 @@ impl Game<'_> {
 		report(&id_mismatches);
 		let game_data: GameData = res.take_data().into_sc2();
 
-		// Finding expansions needs every resource on the map, so this one observation
-		// sees through the fog of war. It's only used for that, not to play with.
+		// SC2 reports every resource on the map even under the fog of
+		// war, so a normal observation is all that map analysis needs.
 		let mut req = Request::new();
-		req.mut_observation().set_disable_fog(true);
-		let map_observation = api.send(req)?.take_observation();
-		let raw = &map_observation.observation.raw_data;
+		req.mut_observation();
+		let observation = api.send(req)?.take_observation();
+		let raw = &observation.observation.raw_data;
 		let visibility = VisibilityMap::from_proto(raw.map_state.visibility.get_or_default());
 		let units = raw
 			.units
@@ -541,9 +541,6 @@ impl Game<'_> {
 			&units,
 		)?;
 
-		let mut req = Request::new();
-		req.mut_observation().set_disable_fog(false);
-		let observation = api.send(req)?.take_observation();
 		let abilities = query_abilities(api, &observation)?;
 		let mut initial = World::initial(Arc::new(map), enemy_race, expansions);
 		initial.game_step = self.game_step;
@@ -560,7 +557,7 @@ impl Game<'_> {
 		let mut iteration = 0;
 		loop {
 			let mut req = Request::new();
-			req.mut_observation().set_disable_fog(false);
+			req.mut_observation();
 			let mut res = turn.api.send(req)?;
 
 			if matches!(res.status(), Status::ended) {

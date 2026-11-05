@@ -68,7 +68,6 @@ fn empty_world() -> World {
 		ramps: Default::default(),
 		vision_blockers: vec![],
 		id_mismatches: vec![],
-		resource_tags: [t(100)].into_iter().collect(),
 	};
 	let expansion = Expansion {
 		loc: Point2::new(30.0, 30.0),
@@ -280,7 +279,11 @@ fn events_report_new_finished_and_dead_units() {
 
 #[test]
 fn mined_out_minerals_leave_their_expansion() {
-	let (world, events) = step(&empty_world(), vec![], &[100]);
+	let mineral = unit(100, UnitTypeId::MineralField, ProtoAlliance::Neutral, (5.0, 5.0));
+	let (first, _) = step(&empty_world(), vec![mineral], &[]);
+	assert_eq!(first.minerals_of(&first.expansions[0]).len(), 1);
+
+	let (world, events) = step(&first, vec![], &[100]);
 	assert!(events
 		.iter()
 		.any(|e| matches!(e, Event::UnitDestroyed(tag, Some(Alliance::Neutral)) if *tag == t(100))));
@@ -353,7 +356,6 @@ fn speed_bonus_applies_on_creep_only() {
 		ramps: Default::default(),
 		vision_blockers: vec![],
 		id_mismatches: vec![],
-		resource_tags: Default::default(),
 	};
 	prev.map = Arc::new(map);
 
@@ -514,7 +516,6 @@ fn counters_and_budget() {
 		ramps: Default::default(),
 		vision_blockers: vec![],
 		id_mismatches: vec![],
-		resource_tags: Default::default(),
 	});
 	let mut res = observation(
 		vec![unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0))],
@@ -573,7 +574,6 @@ fn weapon_stats_account_for_armor_and_attributes() {
 		ramps: Default::default(),
 		vision_blockers: vec![],
 		id_mismatches: vec![],
-		resource_tags: Default::default(),
 	});
 	let mut probe = unit(2, UnitTypeId::Probe, ProtoAlliance::Enemy, (1.0, 4.0));
 	probe.set_health(40.0);
@@ -651,8 +651,7 @@ fn expansion_resources_are_found_by_position_whatever_their_tag() {
 	assert!(mined_out.minerals_of(&exp).is_empty());
 }
 
-/// The first world must be built from a normal observation. This documents what that gives:
-/// an enemy that's never been in an observation isn't in memory.
+/// An enemy that's never been in an observation isn't in memory.
 #[test]
 fn enemy_memory_only_holds_what_was_observed() {
 	let (world, _) = step(
