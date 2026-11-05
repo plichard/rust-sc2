@@ -1,11 +1,17 @@
-use super::{UnitRef, UnitTag, World};
 use crate::{
 	distance::{Center, Distance},
 	geometry::Point2,
 	ids::UnitTypeId,
-	units::Container,
 };
-use std::{borrow::Cow, cmp::Ordering, iter::Sum};
+use crate::{UnitRef, UnitTag, World};
+use indexmap::{IndexMap, IndexSet};
+use std::{
+	borrow::Cow,
+	cmp::Ordering,
+	collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+	hash::{BuildHasher, Hash},
+	iter::Sum,
+};
 
 /// A group of units on the current step, stored as indices into [`World`].
 ///
@@ -391,4 +397,52 @@ player_groups! {
 	gas_buildings,
 	/// Larvas.
 	larvas,
+}
+
+/// Joins collections functionality to check if given item is present in it.
+/// Used in generics of some units methods.
+pub trait Container<T> {
+	/// Returns `true` if item is present in the collection.
+	fn contains(&self, item: &T) -> bool;
+}
+
+impl<T: PartialEq> Container<T> for &[T] {
+	fn contains(&self, other: &T) -> bool {
+		self.iter().any(|item| item == other)
+	}
+}
+impl<T: PartialEq> Container<T> for Vec<T> {
+	fn contains(&self, other: &T) -> bool {
+		self.iter().any(|item| item == other)
+	}
+}
+impl<T: Eq + Hash, S: BuildHasher> Container<T> for HashSet<T, S> {
+	fn contains(&self, item: &T) -> bool {
+		self.contains(item)
+	}
+}
+impl<T: Eq + Hash, V, S: BuildHasher> Container<T> for HashMap<T, V, S> {
+	fn contains(&self, item: &T) -> bool {
+		self.contains_key(item)
+	}
+}
+impl<T: Ord> Container<T> for BTreeSet<T> {
+	fn contains(&self, item: &T) -> bool {
+		self.contains(item)
+	}
+}
+impl<T: Ord, V> Container<T> for BTreeMap<T, V> {
+	fn contains(&self, item: &T) -> bool {
+		self.contains_key(item)
+	}
+}
+impl<T: Eq + Hash> Container<T> for IndexSet<T> {
+	fn contains(&self, item: &T) -> bool {
+		self.contains(item)
+	}
+}
+impl<T: Eq + Hash, V> Container<T> for IndexMap<T, V> {
+	fn contains(&self, item: &T) -> bool {
+		self.contains_key(item)
+	}
 }

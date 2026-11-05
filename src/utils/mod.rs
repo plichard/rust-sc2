@@ -1,7 +1,7 @@
 //! Different utilites useful (or useless) in bot development.
 
 use indexmap::IndexSet;
-use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
+use rustc_hash::{FxHashSet, FxHasher};
 use std::hash::{BuildHasherDefault, Hash};
 
 type FxIndexSet<T> = IndexSet<T, BuildHasherDefault<FxHasher>>;
@@ -77,51 +77,5 @@ where
 			.filter(|p| distance(q, p) <= epsilon)
 			.cloned()
 			.collect()
-	}
-}
-
-#[cfg(feature = "parking_lot")]
-use parking_lot::{RwLock, RwLockReadGuard};
-#[cfg(not(feature = "parking_lot"))]
-use std::sync::{RwLock, RwLockReadGuard};
-
-fn read<T>(lock: &RwLock<T>) -> RwLockReadGuard<T> {
-	#[cfg(feature = "parking_lot")]
-	let reader = lock.read();
-	#[cfg(not(feature = "parking_lot"))]
-	let reader = lock.read().unwrap();
-
-	reader
-}
-
-#[derive(Default)]
-pub struct CacheMap<K, V>(RwLock<FxHashMap<K, V>>);
-impl<K, V> CacheMap<K, V>
-where
-	K: Copy + Eq + Hash,
-	V: Copy,
-{
-	pub fn get_or_create<F>(&self, k: &K, f: F) -> V
-	where
-		F: FnOnce() -> V,
-	{
-		let lock = read(&self.0);
-		if let Some(res) = lock.get(k) {
-			*res
-		} else {
-			drop(lock);
-
-			#[cfg(feature = "parking_lot")]
-			let mut lock = self.0.write();
-			#[cfg(not(feature = "parking_lot"))]
-			let mut lock = self.0.write().unwrap();
-
-			let res = f();
-			lock.insert(*k, res);
-			res
-		}
-	}
-	pub fn get(&self, k: &K) -> Option<V> {
-		read(&self.0).get(k).copied()
 	}
 }

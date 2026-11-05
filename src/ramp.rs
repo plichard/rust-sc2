@@ -23,7 +23,7 @@ pub struct Ramps {
 type Pos = (usize, usize);
 
 /// Ramp data structure with some helpful methods.
-/// All ramps stored in [`Ramps`] in [`ramps`](crate::bot::Bot::ramps) field of bot.
+/// All ramps stored in [`Ramps`] in [`world.map.ramps`](crate::MapData::ramps).
 #[derive(Default, Clone)]
 pub struct Ramp {
 	/// All points which belong to this ramp.

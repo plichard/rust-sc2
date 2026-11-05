@@ -2,10 +2,8 @@
 
 use super::*;
 use crate::{
-	consts::RACE_VALUES,
-	game_data::UnitTypeData,
-	next::{Budget, CalcTarget, Commands, Event, Expansion, MapData, UnitRef, UnitTag, Units},
-	player::Race,
+	consts::RACE_VALUES, game_data::UnitTypeData, player::Race, Budget, CalcTarget, Commands, Event,
+	Expansion, MapData, UnitRef, UnitTag, Units,
 };
 use num_traits::ToPrimitive;
 use sc2_proto::{
@@ -208,7 +206,7 @@ fn losing_health_counts_as_attacked() {
 	assert_eq!(second.unit(t(1)).unwrap().damage_taken(), 15);
 }
 
-/// `Unit::is_attacked` in the old API returns `true` here, because `None < Some(_)`.
+/// `None < Some(_)`, so a plain comparison of health would get this wrong.
 #[test]
 fn losing_the_health_reading_is_not_being_attacked() {
 	let mut visible = unit(1, UnitTypeId::Marine, ProtoAlliance::Enemy, (1.0, 1.0));
@@ -333,7 +331,7 @@ fn with_creep(res: &mut ResponseObservation, value: u8) {
 		Some(image(vec![value; (MAP_SIZE * MAP_SIZE / 8) as usize])).into();
 }
 
-/// A set bit in SC2's creep map means creep. The old `Unit::real_speed` has this backwards.
+/// A set bit in SC2's creep map means creep.
 #[test]
 fn speed_bonus_applies_on_creep_only() {
 	let mut prev = empty_world();
@@ -373,7 +371,6 @@ fn speed_bonus_applies_on_creep_only() {
 	assert!((speed(0xFF) - 3.0 * 2.67).abs() < 0.001);
 }
 
-/// The old code only labels enemy deaths when the unit was a hallucination or cached.
 #[test]
 fn enemy_deaths_are_labelled_as_enemy() {
 	let marine = unit(1, UnitTypeId::Marine, ProtoAlliance::Enemy, (1.0, 1.0));
@@ -615,7 +612,7 @@ fn sleeping_lasts_until_its_frame() {
 	assert!(!world.unit(t(1)).unwrap().is_sleeping());
 }
 
-/// A client newer than the ID tables reports IDs they don't have. The old parser panics on these.
+/// A client newer than the ID tables reports IDs they don't have.
 #[test]
 fn unknown_ids_do_not_end_the_game() {
 	let mut worker = unit(1, UnitTypeId::Probe, ProtoAlliance::Self_, (1.0, 1.0));
@@ -693,7 +690,7 @@ fn enemy_memory_only_holds_what_was_observed() {
 }
 
 mod ids {
-	use crate::next::id_check::check_ids;
+	use crate::id_check::check_ids;
 	use sc2_proto::{
 		data::{AbilityData, BuffData, UnitTypeData as ProtoUnitTypeData, UpgradeData},
 		sc2api::ResponseData,

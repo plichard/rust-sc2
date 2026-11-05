@@ -298,7 +298,9 @@ lazy_static! {
 	///
 	/// Basic usage:
 	/// ```
-	/// if let Some(requirment) = TECH_REQUIREMENTS.get(unit_type) {
+	/// # use rust_sc2::prelude::*;
+	/// # let unit_type = UnitTypeId::Marine;
+	/// if let Some(requirement) = TECH_REQUIREMENTS.get(&unit_type) {
 	///     /* do what you like */
 	/// }
 	/// ```

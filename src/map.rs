@@ -24,8 +24,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 /// A place to build a townhall, and the resources around it.
 ///
 /// Resources are stored by position, because SC2 changes their tags as they go in and
-/// out of vision. Use [`World::minerals_of`](super::World::minerals_of) and
-/// [`World::geysers_of`](super::World::geysers_of) to get the units for this step.
+/// out of vision. Use [`World::minerals_of`](crate::World::minerals_of) and
+/// [`World::geysers_of`](crate::World::geysers_of) to get the units for this step.
 #[derive(Debug, Clone)]
 pub struct Expansion {
 	/// Placement position for the townhall.
@@ -42,7 +42,7 @@ pub struct Expansion {
 	pub base: Option<UnitTag>,
 }
 
-/// Data that doesn't change during a game. Shared by every [`World`](super::World).
+/// Data that doesn't change during a game. Shared by every [`World`](crate::World).
 pub struct MapData {
 	/// Your in-game id.
 	pub player_id: u32,

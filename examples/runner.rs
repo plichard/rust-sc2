@@ -1,25 +1,24 @@
+//! How to use runners.
+
 use rust_sc2::prelude::*;
 
-#[bot]
-#[derive(Default)]
 struct EmptyBot;
+
 impl Player for EmptyBot {
-	fn get_player_settings(&self) -> PlayerSettings {
+	fn settings(&self) -> PlayerSettings<'_> {
 		PlayerSettings::new(Race::Random)
 	}
 }
 
-// Example of how to use runner
 fn main() -> SC2Result<()> {
-	let mut bot = EmptyBot::default();
+	let mut bot = EmptyBot;
 
 	// Bot vs Computer
 	// 1. Initialize runner
 	let mut runner = RunnerSingle::new(
-		&mut bot,
 		Computer::new(Race::Random, Difficulty::VeryEasy, None),
 		"EverDreamLE",
-		Some("4.10"), // Client version can be specified, otherwise will be used latest available version
+		Some("4.10"), // Client version can be specified, otherwise the latest available is used
 	);
 
 	// 2. Configure runner
@@ -27,13 +26,14 @@ fn main() -> SC2Result<()> {
 	runner.computer = Computer::new(Race::Protoss, Difficulty::VeryHard, Some(AIBuild::Air));
 	runner.realtime = true; // Default: false
 	runner.save_replay_as = Some("path/to/replay/MyReplay.SC2Replay"); // Default: None == don't save replay
+	runner.game_step = 2; // Default: 1
 
-	// 3. Launch SC2
+	// 3. Launch SC2, or use runner.connect(port) for a client that's already running
 	runner.launch()?;
 
 	// 4. Run games
 	// Run game once
-	runner.run_game()?;
+	runner.run_game(&mut bot)?;
 
 	const MAPS: &[&str] = &["EverDreamLE", "GoldenWallLE", "IceandChromeLE"];
 	const RACES: &[Race] = &[Race::Zerg, Race::Terran, Race::Protoss];
@@ -46,25 +46,15 @@ fn main() -> SC2Result<()> {
 		runner.computer.race = RACES[i];
 		runner.computer.difficulty = DIFFICULTIES[i];
 
-		runner.run_game()?;
+		runner.run_game(&mut bot)?;
 	}
 
-	// Better to close runner manually before launching other
+	// Better to close runner manually before launching another
 	runner.close();
-
-	let mut other = RunnerSingle::new(
-		&mut bot,
-		Computer::new(Race::Random, Difficulty::VeryEasy, None),
-		"Flat32",
-		None,
-	);
-	other.run_game()?;
-	other.close();
 
 	// Human vs Bot
 	// 1. Initialize runner
 	let mut runner = RunnerMulti::new(
-		&mut bot,
 		PlayerSettings::new(Race::Random).with_name("Name"),
 		"PillarsofGoldLE",
 		None,
@@ -80,7 +70,7 @@ fn main() -> SC2Result<()> {
 	runner.launch()?;
 
 	// 4. Run games
-	runner.run_game()?;
+	runner.run_game(&mut bot)?;
 
 	// Runners dropped here:
 	// Any launched sc2 clients will be closed automatically

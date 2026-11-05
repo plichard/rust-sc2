@@ -3,10 +3,9 @@
 use crate::{
 	geometry::{Point2, Point3},
 	ids::AbilityId,
-	FromProto, IntoProto, IntoProtoField,
+	FromProto, IntoProto,
 };
 use num_traits::{FromPrimitive, ToPrimitive};
-use rustc_hash::FxHashMap;
 use sc2_proto::{
 	error::ActionResult as ProtoActionResult,
 	raw::action_raw::Action as ProtoRawAction,
@@ -15,13 +14,6 @@ use sc2_proto::{
 		action_chat::Channel as ActionChatChannel, Action as ProtoAction, ActionError as ProtoActionError,
 	},
 };
-// pub(crate) type Command = (u64, (AbilityId, Target, bool));
-
-#[derive(Default, Clone)]
-pub(crate) struct Commander {
-	pub commands: Vec<(AbilityId, Target, bool, Vec<u64>)>,
-	pub autocast: FxHashMap<AbilityId, Vec<u64>>,
-}
 
 /// Target of ability used by unit.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -131,7 +123,7 @@ impl FromProto<&ProtoAction> for Option<Action> {
 }
 
 /// Structure used to analyze actions failed on previous game step.
-/// Stored in [`state.action_errors`](crate::game_state::GameState::action_errors).
+/// Stored in [`world.action_errors`](crate::World::action_errors).
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct ActionError {
 	/// Tag of unit that was executing action.

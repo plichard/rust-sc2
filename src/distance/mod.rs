@@ -1,7 +1,7 @@
 //! Traits for comparing distance between points and units.
 #![allow(clippy::wrong_self_convention)]
 
-use crate::{geometry::Point2, units::iter::filter_fold};
+use crate::geometry::Point2;
 use std::{cmp::Ordering, vec::IntoIter};
 
 #[cfg(feature = "rayon")]
@@ -38,6 +38,13 @@ pub trait Distance: Into<Point2> {
 }
 
 impl<T: Into<Point2>> Distance for T {}
+
+fn filter_fold<T, Acc>(
+	mut pred: impl FnMut(&T) -> bool,
+	mut fold: impl FnMut(Acc, T) -> Acc,
+) -> impl FnMut(Acc, T) -> Acc {
+	move |acc, u| if pred(&u) { fold(acc, u) } else { acc }
+}
 
 #[inline]
 fn cmp<T: PartialOrd>(a: &T, b: &T) -> Ordering {

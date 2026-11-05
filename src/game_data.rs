@@ -21,7 +21,7 @@ use sc2_proto::{
 use serde::{Deserialize, Serialize};
 
 /// All the data about different ids stored here.
-/// Can be accessed through [`game_data`](crate::bot::Bot::game_data) field.
+/// Can be accessed through [`world.map.game_data`](crate::MapData::game_data).
 #[derive(Default, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct GameData {

@@ -59,7 +59,7 @@ impl FromProto<&VitalScoreDetails> for Vital {
 
 /// All kinds of scores stored here.
 ///
-/// Can be accessed through [state.observation.score](crate::game_state::Observation::score).
+/// Can be accessed through [`world.score`](crate::World::score).
 #[derive(Default, Clone)]
 pub struct Score {
 	pub score_type: ScoreType,

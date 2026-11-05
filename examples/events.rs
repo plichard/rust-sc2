@@ -1,34 +1,33 @@
+//! How to use events.
+
 use rust_sc2::prelude::*;
 
-// Example of how to use events
-
-#[bot]
-#[derive(Default)]
 struct EmptyBot;
+
 impl Player for EmptyBot {
-	fn get_player_settings(&self) -> PlayerSettings {
+	fn settings(&self) -> PlayerSettings<'_> {
 		PlayerSettings::new(Race::Random)
 	}
 
-	// Use it like here
-	fn on_event(&mut self, event: Event) -> SC2Result<()> {
+	fn on_event(&mut self, ctx: &mut Context, event: Event) -> SC2Result<()> {
 		match event {
 			Event::UnitDestroyed(_tag, alliance) => {
 				match alliance {
 					Some(Alliance::Own) => { /* your code here */ }
+					Some(Alliance::Enemy) => { /* your code here */ }
 					Some(Alliance::Neutral) => { /* your code here */ }
-					// Enemy
+					// Allied units, and units that were never seen
 					_ => { /* your code here */ }
 				}
 			}
 			Event::UnitCreated(tag) => {
-				if let Some(_u) = self.units.my.units.get(tag) { /* your code here */ }
+				if let Some(_u) = ctx.world.my().units().get(tag) { /* your code here */ }
 			}
 			Event::ConstructionStarted(tag) => {
-				if let Some(_u) = self.units.my.structures.get(tag) { /* your code here */ }
+				if let Some(_u) = ctx.world.my().structures().get(tag) { /* your code here */ }
 			}
 			Event::ConstructionComplete(tag) => {
-				if let Some(_u) = self.units.my.structures.get(tag) { /* your code here */ }
+				if let Some(_u) = ctx.world.my().structures().get(tag) { /* your code here */ }
 			}
 			Event::RandomRaceDetected(_race) => { /* your code here */ }
 		}
@@ -37,10 +36,8 @@ impl Player for EmptyBot {
 }
 
 fn main() -> SC2Result<()> {
-	let mut bot = EmptyBot::default();
-
 	run_vs_computer(
-		&mut bot,
+		&mut EmptyBot,
 		Computer::new(Race::Random, Difficulty::VeryEasy, None),
 		"EverDreamLE",
 		Default::default(),

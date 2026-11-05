@@ -17,9 +17,7 @@ type Color = (u32, u32, u32);
 type ScreenPos = (f32, f32);
 
 /// Helper struct for interacting with Debug API.
-/// Can be accessed through [`debug`] field of bot.
-///
-/// [`debug`]: crate::bot::Bot::debug
+/// Can be accessed through [`ctx.debug`](crate::Context::debug).
 #[derive(Default)]
 pub struct Debugger {
 	debug_commands: Vec<DebugCommand>,

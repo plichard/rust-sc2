@@ -217,7 +217,7 @@ pub(super) fn build_world(
 		.collect::<Vec<_>>();
 
 	for u in units.iter_mut().filter(|u| u.alliance.is_enemy()) {
-		// Once flagged, a unit stays a hallucination, as in the old API
+		// Once flagged, a unit stays a hallucination
 		if u.is_hallucination {
 			hallucinations.insert(u.tag);
 		} else if hallucinations.contains(&u.tag) {

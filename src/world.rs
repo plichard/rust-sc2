@@ -1,7 +1,6 @@
 use super::{units::PlayerGroups, Expansion, MapData, PlayerUnits, UnitData, UnitRef, UnitTag, Units};
 use crate::{
 	action::{Action, ActionError},
-	bot::{Completion, UnitAlias},
 	consts::{TECH_ALIAS, UNIT_ALIAS},
 	distance::Distance,
 	game_data::Cost,
@@ -62,7 +61,7 @@ pub struct World {
 	pub enemy_race: Race,
 	/// Your ready upgrades.
 	pub upgrades: FxHashSet<UpgradeId>,
-	/// Enemy upgrades you noted with [`Commands`](super::Commands).
+	/// Enemy upgrades you noted with [`Commands`](crate::Commands).
 	pub enemy_upgrades: FxHashSet<UpgradeId>,
 	/// Creep on the map.
 	pub creep: PixelMap,
@@ -217,8 +216,7 @@ impl World {
 	/// Opponent's units, including ones seen on earlier steps that are probably still around:
 	/// out of vision, or thought to be burrowed. Their data is from when they were last seen.
 	///
-	/// Replaces the old `enemies_cache` feature, and is always available. Unlike that feature,
-	/// [`enemy`](Self::enemy) always reports exactly what SC2 said on this step.
+	/// [`enemy`](Self::enemy) on the other hand reports exactly what SC2 said on this step.
 	pub fn enemy_memory(&self) -> PlayerUnits<'_> {
 		PlayerUnits {
 			world: self,
@@ -379,7 +377,7 @@ impl World {
 	pub fn has_upgrade(&self, upgrade: UpgradeId) -> bool {
 		self.upgrades.contains(&upgrade)
 	}
-	/// Checks if an enemy upgrade was noted with [`Commands`](super::Commands).
+	/// Checks if an enemy upgrade was noted with [`Commands`](crate::Commands).
 	pub fn enemy_has_upgrade(&self, upgrade: UpgradeId) -> bool {
 		self.enemy_upgrades.contains(&upgrade)
 	}
@@ -443,6 +441,20 @@ impl World {
 	pub fn remembered_counter(&self) -> CountOptions<'_> {
 		CountOptions::new(self, CountSource::Remembered)
 	}
+}
+
+#[derive(Clone, Copy)]
+enum Completion {
+	Complete,
+	Ordered,
+	All,
+}
+
+#[derive(Clone, Copy)]
+enum UnitAlias {
+	None,
+	Unit,
+	Tech,
 }
 
 #[derive(Clone, Copy)]

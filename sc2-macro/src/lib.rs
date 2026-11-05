@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-pub use sc2_proc_macro::{bot, bot_new, variant_checkers, FromStr};
+pub use sc2_proc_macro::{variant_checkers, FromStr};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ParseEnumError;

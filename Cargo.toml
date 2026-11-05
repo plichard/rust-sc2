@@ -23,10 +23,8 @@ rand = "^0.8.0"
 log = "^0.4.11"
 rustc-hash = "^1.1.0"
 rayon = { version = "^1.3.1", optional = true }
-parking_lot = { version = "^0.12.0", optional = true }
 indexmap = "^1.5.1"
 serde = { version = "^1.0.114", features = ["derive"], optional = true }
-lazy-init = "^0.5.0"
 once_cell = "^1.8.0"
 dirs = "^4.0.0"
 
@@ -37,6 +35,5 @@ regex = "^1.3.9"
 clap = { version = "4", features = ["derive"] }
 
 [features]
-enemies_cache = []
 wine_sc2 = []
-rayon = ["dep:rayon", "indexmap/rayon", "ndarray/rayon"]
+rayon = ["dep:rayon"]

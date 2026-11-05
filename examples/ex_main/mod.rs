@@ -1,7 +1,5 @@
 use clap::{Parser, Subcommand};
-use rust_sc2::bot::Bot;
 use rust_sc2::prelude::*;
-use std::ops::{Deref, DerefMut};
 
 #[derive(Parser)]
 #[clap(version, author)]
@@ -30,7 +28,6 @@ enum Command {
 	/// Run local game vs Computer
 	Local {
 		/// Set path to map, relative to "Starcraft II/Maps" directory.
-		/// See `https://github.com/UltraMachine/rust-sc2/blob/master/src/paths.rs#L38-L67`
 		#[clap(short, long)]
 		map: String,
 		/// Set opponent race
@@ -51,11 +48,14 @@ enum Command {
 		/// Enable realtime mode
 		#[clap(long)]
 		realtime: bool,
+		/// Port of an already running SC2 client to use.
+		/// The client isn't launched, and is left running after the game.
+		#[clap(long)]
+		port: Option<i32>,
 	},
 	/// Run game Human vs Bot
 	Human {
 		/// Set path to map, relative to "Starcraft II/Maps" directory.
-		/// See `https://github.com/UltraMachine/rust-sc2/blob/master/src/paths.rs#L38-L67`
 		#[clap(short, long)]
 		map: String,
 		/// Set human race
@@ -73,13 +73,13 @@ enum Command {
 	},
 }
 
-pub(crate) fn main(mut bot: impl Player + DerefMut<Target = Bot> + Deref<Target = Bot>) -> SC2Result<()> {
+pub(crate) fn main(mut bot: impl Player) -> SC2Result<()> {
 	let args = Args::parse();
 
 	if args.game_step == 0 {
 		panic!("game_step must be X >= 1")
 	}
-	bot.set_game_step(args.game_step);
+	let game_step = Some(args.game_step);
 
 	match args.command {
 		Some(Command::Local {
@@ -90,6 +90,7 @@ pub(crate) fn main(mut bot: impl Player + DerefMut<Target = Bot> + Deref<Target 
 			sc2_version,
 			save_replay,
 			realtime,
+			port,
 		}) => run_vs_computer(
 			&mut bot,
 			Computer::new(race, difficulty.unwrap_or(Difficulty::VeryEasy), ai_build),
@@ -98,7 +99,8 @@ pub(crate) fn main(mut bot: impl Player + DerefMut<Target = Bot> + Deref<Target 
 				sc2_version: sc2_version.as_deref(),
 				realtime,
 				save_replay_as: save_replay.as_deref(),
-				port: None,
+				port,
+				game_step,
 			},
 		),
 		Some(Command::Human {
@@ -120,6 +122,7 @@ pub(crate) fn main(mut bot: impl Player + DerefMut<Target = Bot> + Deref<Target 
 				realtime: true,
 				save_replay_as: save_replay.as_deref(),
 				port: None,
+				game_step,
 			},
 		),
 		None => run_ladder_game(
@@ -128,6 +131,7 @@ pub(crate) fn main(mut bot: impl Player + DerefMut<Target = Bot> + Deref<Target 
 			args.host_port.expect("GamePort must be specified"),
 			args.player_port.expect("StartPort must be specified"),
 			args.opponent_id.as_deref(),
+			game_step,
 		),
 	}
 }

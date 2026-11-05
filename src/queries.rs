@@ -4,7 +4,6 @@ use super::{Expansion, UnitRef, UnitTag, World};
 use crate::{
 	action::{ActionResult, Target},
 	api::API,
-	bot::PlacementOptions,
 	distance::Distance,
 	geometry::Point2,
 	ids::{AbilityId, UnitTypeId},
@@ -16,6 +15,29 @@ use sc2_proto::{
 	query::{RequestQueryBuildingPlacement, RequestQueryPathing},
 	sc2api::Request,
 };
+
+/// Additional options for [`find_placement`](crate::api::API::find_placement).
+#[derive(Clone, Copy)]
+pub struct PlacementOptions {
+	/// Maximum distance of checked points from given position. [Default: `15`]
+	pub max_distance: isize,
+	/// Step between each checked position.  [Default: `2`]
+	pub step: isize,
+	/// Return random found point if `true`, or closest to given position. [Default: `false`]
+	pub random: bool,
+	/// Filter positions where addon can fit. [Default: `false`]
+	pub addon: bool,
+}
+impl Default for PlacementOptions {
+	fn default() -> Self {
+		Self {
+			max_distance: 15,
+			step: 2,
+			random: false,
+			addon: false,
+		}
+	}
+}
 
 impl API {
 	/// Sends pathing requests. Takes (start, goal) pairs, where start is a position or a unit tag.

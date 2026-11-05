@@ -80,29 +80,27 @@ Install SC2 through [Battle.net](https://www.blizzard.com/en-us/apps/battle.net/
 
 
 # Example
-The simplest competetive bot in less than 30 lines. Copy this into your `/path/to/project/main.rs`
+A simple bot that sends its workers at the enemy. Copy this into your `/path/to/project/main.rs`
 ```rust
 use rust_sc2::prelude::*;
 
-#[bot]
-#[derive(Default)]
 struct WorkerRush;
+
 impl Player for WorkerRush {
-    fn get_player_settings(&self) -> PlayerSettings {
+    fn settings(&self) -> PlayerSettings<'_> {
         PlayerSettings::new(Race::Protoss)
     }
-    fn on_start(&mut self) -> SC2Result<()> {
-        for worker in &self.units.my.workers {
-            worker.attack(Target::Pos(self.enemy_start), false);
+    fn on_start(&mut self, ctx: &mut Context) -> SC2Result<()> {
+        for worker in ctx.world.my().workers() {
+            ctx.cmds.attack(worker, ctx.world.map.enemy_start, false);
         }
         Ok(())
     }
 }
 
 fn main() -> SC2Result<()> {
-    let mut bot = WorkerRush::default();
     run_vs_computer(
-        &mut bot,
+        &mut WorkerRush,
         Computer::new(Race::Random, Difficulty::Medium, None),
         "EternalEmpireLE",
         Default::default(),
@@ -138,8 +136,13 @@ cargo run --example reaper-rush -- human --help
 ```
 
 
+To play on an SC2 client that's already running, pass its port:
+```
+cargo run --example reaper-rush -- local --map <map> --port <port>
+```
+
 ## Optional features
-- `"rayon"` - enables parallelism and makes all types threadsafe
+- `"rayon"` - adds parallel iteration over units (`par_iter`, `par_filter`, ...)
 - `"serde"` - adds implementation of `Serialize`, `Deserialize` to ids, Race, GameResult, ...
 - `"wine_sc2"` - allows you to run headful SC2 through Lutris and Wine
 
@@ -148,23 +151,18 @@ First of all, import rust-sc2 lib:
 ```rust
 use rust_sc2::prelude::*;
 ```
-Create your bot's struct (Can be Unit or C-like):
+Create your bot's struct. It only holds your own state, the library's state is passed to you:
 ```rust
-#[bot]
-struct MyBot;
-```
-```rust
-#[bot]
+#[derive(Default)]
 struct MyBot {
     /* fields here */
 }
 ```
-Then implement `Player` trait for your bot:
+Then implement the `Player` trait for your bot:
 ```rust
-// You mustn't call any of these methods by hands, they're for API only
 impl Player for MyBot {
     // Must be implemented
-    fn get_player_settings(&self) -> PlayerSettings {
+    fn settings(&self) -> PlayerSettings<'_> {
         // Race can be Terran, Zerg, Protoss or Random
         PlayerSettings::new(Race::Random)
     }
@@ -172,55 +170,42 @@ impl Player for MyBot {
     // Methods below aren't necessary to implement (Empty by default)
 
     // Called once on first step
-    fn on_start(&mut self) -> SC2Result<()> {
+    fn on_start(&mut self, ctx: &mut Context) -> SC2Result<()> {
         /* your awesome code here */
     }
 
     // Called on every game step
-    fn on_step(&mut self, iteration: usize) -> SC2Result<()> {
+    fn on_step(&mut self, ctx: &mut Context, iteration: usize) -> SC2Result<()> {
         /* your awesome code here */
     }
 
     // Called once on last step
     // "result" says if your bot won or lost game
-    fn on_end(&self, result: GameResult) -> SC2Result<()> {
+    fn on_end(&mut self, result: GameResult) -> SC2Result<()> {
         /* your awesome code here */
     }
 
     // Called on different events, see more in `examples/events.rs`
-    fn on_event(&mut self, event: Event) -> SC2Result<()> {
+    fn on_event(&mut self, ctx: &mut Context, event: Event) -> SC2Result<()> {
         /* your awesome code here */
     }
 }
 ```
-Also you might want to add method to construct it:
-```rust
-impl MyBot {
-    // It's necessary to have #[bot_new] here
-    #[bot_new]
-    fn new() -> Self {
-        Self {
-            /* initializing fields */
-        }
-    }
-}
-```
-If your bot implements `Default` you can simply call `MyBot::default()`, but if you want more control over initializer:
-```rust
-impl MyBot {
-    // You don't need #[bot_new] here, because of "..Default::default()"
-    fn new() -> Self {
-        Self {
-            /* initializing fields */
-            ..Default::default()
-        }
-    }
-}
-```
+`Context` gives you everything you need during your turn:
+- `ctx.world`: the game state of this step, such as `ctx.world.my().workers()` or `ctx.world.minerals`
+- `ctx.cmds`: orders for your units, such as `ctx.cmds.attack(unit, target, false)`
+- `ctx.budget`: resources left to spend this turn, such as `ctx.budget.can_afford(ctx.world, UnitTypeId::Marine, true)`
+- `ctx.api`: questions for SC2, such as `ctx.api.find_placement(...)`
+- `ctx.debug`: debug drawing and cheats
+
+These are independent, so you can give orders and change your bot's fields while looping over units.
+
+To remember a unit between steps, keep its `UnitTag` and look it up with `ctx.world.unit(tag)`, which returns `None` once the unit is gone from the observation. A `UnitRef` can't be kept past the step it belongs to. The one exception is resources: SC2 changes the tags of mineral fields and geysers as they go in and out of vision, so `Expansion` stores their positions, and `ctx.world.minerals_of(expansion)` finds them on the current step.
+
 The rest is to run it:
 ```rust
 fn main() -> SC2Result<()> {
-    let mut bot = MyBot::new();
+    let mut bot = MyBot::default();
     run_vs_computer(
         &mut bot,
         Computer::new(
@@ -232,4 +217,10 @@ fn main() -> SC2Result<()> {
         LaunchOptions::default(),
     )
 }
+```
+
+## Updating game IDs
+IDs of units, abilities, upgrades and buffs change between game versions. If they don't match your client, the library logs an error at game start and lists the differences in `world.map.id_mismatches`. To fix it, regenerate them from the `stableid.json` your client writes when it starts. Under Wine that file is in the Wine prefix, not your own Documents folder:
+```
+python3 generate_ids.py "/path/to/Documents/StarCraft II/stableid.json"
 ```

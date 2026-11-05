@@ -31,7 +31,7 @@ pub struct Commands {
 
 impl Commands {
 	/// Orders unit to execute given command.
-	/// Identical orders are merged into one action, as in the old API.
+	/// Identical orders are merged into one action.
 	///
 	/// `target` can be a [`Target`], a position, a unit or a tag.
 	pub fn command(&mut self, unit: UnitRef<'_>, ability: AbilityId, target: impl Into<Target>, queue: bool) {
